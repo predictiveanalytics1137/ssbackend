@@ -11,6 +11,9 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
+from storages.backends.s3boto3 import S3Boto3Storage
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,6 +43,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'chat',
     'corsheaders',
+    'storages',
 ]
 
 MIDDLEWARE = [
@@ -83,6 +87,34 @@ WSGI_APPLICATION = 'chat_backend.wsgi.application'
 #         'NAME': BASE_DIR / 'db.sqlite3',
 #     }
 # }
+
+
+# # AWS S3 Configuration
+# AWS_ACCESS_KEY_ID = 'AKIAQKGGXFEHH52KWMOX'  # Replace with the IAM user's Access Key ID
+# AWS_SECRET_ACCESS_KEY = 'SF/9bkb+JOPqD6+7z++ti7dluURzHeKR9LL3PhtL'  # Replace with the IAM user's Secret Access Key
+# AWS_STORAGE_BUCKET_NAME = 'pa-documents-storage-bucket'  # Your S3 bucket name
+# AWS_S3_REGION_NAME = 'ap-south-1'  # Your bucket's region
+# AWS_S3_SIGNATURE_VERSION = 's3v4'
+
+# # Default File Storage
+# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+# # Media URL to access files via S3
+# MEDIA_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/'
+
+
+
+AWS_ACCESS_KEY_ID = 'AKIAQKGGXFEHH52KWMOX'  # Replace with your actual access key
+AWS_SECRET_ACCESS_KEY = 'SF/9bkb+JOPqD6+7z++ti7dluURzHeKR9LL3PhtL'  # Replace with your actual secret key
+AWS_STORAGE_BUCKET_NAME = 'pa-documents-storage-bucket'  # Replace with your bucket name
+AWS_S3_REGION_NAME = 'ap-south-1'  # Region where your bucket is located (based on your provided screenshot)
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+MEDIA_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/'
 
 
 DATABASES = {

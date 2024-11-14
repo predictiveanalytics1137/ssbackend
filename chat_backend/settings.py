@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework.authtoken',
     'chat',
     'corsheaders',
     'storages',
@@ -48,6 +49,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -58,6 +60,15 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'chat_backend.urls'
+
+CORS_ALLOW_ALL_ORIGINS = True  # For development purposes only
+
+# Allow the 'Authorization' header
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'Authorization',
+]
 
 TEMPLATES = [
     {
@@ -78,29 +89,6 @@ TEMPLATES = [
 WSGI_APPLICATION = 'chat_backend.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
-
-# # AWS S3 Configuration
-# AWS_ACCESS_KEY_ID = 'AKIAQKGGXFEHH52KWMOX'  # Replace with the IAM user's Access Key ID
-# AWS_SECRET_ACCESS_KEY = 'SF/9bkb+JOPqD6+7z++ti7dluURzHeKR9LL3PhtL'  # Replace with the IAM user's Secret Access Key
-# AWS_STORAGE_BUCKET_NAME = 'pa-documents-storage-bucket'  # Your S3 bucket name
-# AWS_S3_REGION_NAME = 'ap-south-1'  # Your bucket's region
-# AWS_S3_SIGNATURE_VERSION = 's3v4'
-
-# # Default File Storage
-# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-
-# # Media URL to access files via S3
-# MEDIA_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/'
 
 
 

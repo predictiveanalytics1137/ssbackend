@@ -4,7 +4,7 @@ import os
 import datetime
 from io import BytesIO
 from typing import Any, Dict, List
-
+from langchain.schema import AIMessage, HumanMessage
 import boto3
 import pandas as pd
 import openai
@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 from langchain.chains import ConversationChain
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
-
+from langchain.memory import ConversationBufferMemory
 from .models import FileSchema, UploadedFile
 from .serializers import UploadedFileSerializer
 
@@ -40,6 +40,8 @@ openai.api_key = OPENAI_API_KEY
 # ===========================
 llm_chatgpt = ChatOpenAI(
     model="gpt-3.5-turbo-16k",
+    # model = "gpt-4",
+
     temperature=0.7,
     openai_api_key=OPENAI_API_KEY,
 )
@@ -48,8 +50,8 @@ llm_chatgpt = ChatOpenAI(
 prompt_chatgpt = PromptTemplate(
     input_variables=["history", "user_input"],
     template=(
-        "You are a helpful AI assistant. You guide users through defining predictive questions and refining goals.\n"
-        "If the user uploads a dataset, integrate the schema into the conversation to assist with column identification.\n\n"
+        "You are a helpful PACX AI assistant. You guide users through defining predictive questions and refining goals.\n"
+        # "If the user uploads a dataset, integrate the schema into the conversation to assist with column identification.\n\n"
         "Steps:\n"
         "1. Discuss the Subject they want to predict.\n"
         "2. Confirm the Target Value they want to predict.\n"
@@ -66,6 +68,7 @@ conversation_chain_chatgpt = ConversationChain(
     llm=llm_chatgpt,
     prompt=prompt_chatgpt,
     input_key="user_input",
+    memory=ConversationBufferMemory(),  # Add memory instance
 )
 
 # ===========================
@@ -128,21 +131,76 @@ def infer_column_dtype(series: pd.Series) -> str:
     # Default to string
     return "string"
 
-def suggest_target_column(df: pd.DataFrame) -> Any:
+# def suggest_target_column(df: pd.DataFrame) -> Any:
+#     """
+#     Suggests a target column based on numeric data types.
+#     """
+#     numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
+#     return numeric_cols[0] if len(numeric_cols) > 0 else None
+
+def get_user_specified_target(chat_history: List[Any]) -> str:
     """
-    Suggests a target column based on numeric data types.
+    Extracts user-specified target column from chat history if available.
     """
-    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
-    return numeric_cols[0] if len(numeric_cols) > 0 else None
+    for message in reversed(chat_history):  # Traverse messages in reverse order to find the latest target
+        if isinstance(message, HumanMessage):  # Only check user messages
+            if "target column" in message.content.lower():
+                # Extract the column name (customize regex as needed)
+                import re
+                match = re.search(r"target column: (\w+)", message.content, re.IGNORECASE)
+                if match:
+                    return match.group(1)
+    return None
+
+
+
+from langchain.schema import HumanMessage
+
+def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+    """
+    Suggests a target column based on user input or predictive question.
+    """
+    # Check if the user specified a target column
+    user_target = get_user_specified_target(chat_history)
+    if user_target and user_target in df.columns:
+        return user_target
+
+    # Use LLM to predict the target column based on a description (if available)
+    target_suggestion_prompt = (
+        f"The user uploaded a dataset with the following columns: {', '.join(df.columns)}.\n"
+        "Based on the context of their predictive question, suggest the best target column."
+    )
+    response = llm_chatgpt.invoke([HumanMessage(content=target_suggestion_prompt)])
+    suggested_column = response.content.strip()
+    return suggested_column if suggested_column in df.columns else None
+
+
+# def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+#     """
+#     Suggests an entity ID column based on uniqueness.
+#     """
+#     for col in df.columns:
+#         if df[col].is_unique:
+#             return col
+#     return None
 
 def suggest_entity_id_column(df: pd.DataFrame) -> Any:
     """
-    Suggests an entity ID column based on uniqueness.
+    Suggests an entity ID column based on uniqueness and naming conventions.
     """
+    likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+    for col in likely_id_columns:
+        if df[col].nunique() / len(df) > 0.95:  # At least 95% unique values
+            return col
+
+    # Fallback: Find any column with >95% unique values
     for col in df.columns:
-        if df[col].is_unique:
+        if df[col].nunique() / len(df) > 0.95:
             return col
     return None
+
+
+
 
 # ===========================
 # Unified ChatGPT API
@@ -153,6 +211,9 @@ class UnifiedChatGPTAPI(APIView):
     Endpoint: /api/chatgpt/
     """
     parser_classes = [MultiPartParser, FormParser, JSONParser]  # Include JSONParser
+    uploaded_schema_by_user = {}
+
+    
 
     def post(self, request):
         """
@@ -160,18 +221,24 @@ class UnifiedChatGPTAPI(APIView):
         Differentiates based on the presence of files in the request.
         """
         if "file" in request.FILES:  # If files are present, handle file uploads
-            return self.handle_file_upload(request.FILES.getlist("file"))
+            return self.handle_file_upload(request, request.FILES.getlist("file"))
 
         # Else, handle chat message
         return self.handle_chat(request)
 
-    def handle_file_upload(self, files: List[Any]):
+    def handle_file_upload(self, request, files: List[Any]):
         """
         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
         After processing, appends schema details to the chat messages.
         """
+
+        files = request.FILES.getlist("file")
         if not files:
             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        user_id = request.data.get("user_id", "default_user") 
+        
+        
 
         try:
             uploaded_files_info = []
@@ -182,7 +249,8 @@ class UnifiedChatGPTAPI(APIView):
                 # Validate file format
                 if not file.name.lower().endswith(('.csv', '.xlsx')):
                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
-
+                
+            
                 # Read file into Pandas DataFrame
                 if file.name.lower().endswith('.csv'):
                     df = pd.read_csv(file)
@@ -257,10 +325,11 @@ class UnifiedChatGPTAPI(APIView):
                         'file_url': file_instance.file_url,
                         'schema': schema,
                         'suggestions': {  # Add suggestions based on the data
-                            'target_column': suggest_target_column(df),
+                            'target_column': suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages),
                             'entity_id_column': suggest_entity_id_column(df),
                         }
                     })
+                    
                 else:
                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -268,6 +337,16 @@ class UnifiedChatGPTAPI(APIView):
             schema_messages = [self.format_schema_message(uploaded_file) for uploaded_file in uploaded_files_info]
             combined_schema_message = "\n\n".join(schema_messages)
             # print(f"Combined schema message for chat: {combined_schema_message}")  # Debugging statement
+
+
+            # Store schema for user
+            UnifiedChatGPTAPI.uploaded_schema_by_user[user_id] = combined_schema_message
+
+            if hasattr(conversation_chain_chatgpt.memory, "chat_memory"):
+                conversation_chain_chatgpt.memory.chat_memory.messages.append(
+                    HumanMessage(content=f"Schema for '{file.name}': {combined_schema_message}")
+                )
+
 
             return Response({
                 "message": "Files uploaded and processed successfully.",
@@ -284,40 +363,56 @@ class UnifiedChatGPTAPI(APIView):
         except Exception as e:
             print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-
+    
     def handle_chat(self, request):
         """
         Handles user chat messages using ChatGPT.
         """
         user_input = request.data.get("message", "").strip()
-        user_id = request.data.get("user_id", "default_user")  # Optional: Track user sessions
+        user_id = request.data.get("user_id", "default_user")
 
         if not user_input:
             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-        assistant_response = conversation_chain_chatgpt.run(user_input=user_input)
+        # Fetch schema for the user session
+        uploaded_schema = UnifiedChatGPTAPI.uploaded_schema_by_user.get(user_id, "")
+
+        # Pass schema into the conversation prompt
+        assistant_response = conversation_chain_chatgpt.run(
+            user_input=f"{user_input}\n\nUploaded Schema:\n{uploaded_schema}"
+        )
 
         return Response({
             "response": assistant_response
         })
 
+
+
+    
+    
+
+
+    
     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
         """
         Formats the schema information to be appended as an assistant message in the chat.
         """
         schema = uploaded_file['schema']
+        target_column = uploaded_file['suggestions']['target_column']
+        entity_id_column = uploaded_file['suggestions']['entity_id_column']
         schema_text = (
             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
-            f"Target Column Suggestion: {uploaded_file['suggestions']['target_column']}\n"
-            f"Entity ID Column Suggestion: {uploaded_file['suggestions']['entity_id_column']}\n\n"
+            f"Target Column Suggestion: {target_column or 'None provided'}\n"
+            f"Entity ID Column Suggestion: {entity_id_column or 'None provided'}\n\n"
             "Please confirm:\n\n"
             "- Is the Target Column correct?\n"
             "- Is the Entity ID Column correct?\n"
             '(Reply "yes" or provide the correct column names.)'
         )
         return schema_text
+
 
     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
         """
@@ -361,3 +456,6 @@ class UnifiedChatGPTAPI(APIView):
             print(f"Glue table '{table_name}' created successfully.")
         except Exception as e:
             print(f"Glue operation failed: {str(e)}")
+
+
+

@@ -39,7 +39,9 @@ openai.api_key = OPENAI_API_KEY
 # Initialize OpenAI LangChain model for ChatGPT
 # ===========================
 llm_chatgpt = ChatOpenAI(
-    model="gpt-3.5-turbo-16k",
+    # model="gpt-3.5-turbo-16k",
+     model="gpt-4",
+    
     # model = "gpt-4",
 
     temperature=0.7,
@@ -47,22 +49,48 @@ llm_chatgpt = ChatOpenAI(
 )
 
 # LangChain prompt with memory integration for ChatGPT
+# prompt_chatgpt = PromptTemplate(
+#     input_variables=["history", "user_input"],
+#     template=(
+#         "You are a helpful PACX AI assistant. You guide users through defining predictive questions and refining goals.\n"
+#         # "If the user uploads a dataset, integrate the schema into the conversation to assist with column identification.\n\n"
+#         "Steps:\n"
+#         "1. Discuss the Subject they want to predict.\n"
+#         "2. Confirm the Target Value they want to predict.\n"
+#         "3. Check if there's a specific time frame for the prediction.\n"
+#         "4. Reference the dataset schema if available.\n"
+#         "5. Summarize inputs before proceeding to model creation.\n\n"
+#         "Conversation history: {history}\n"
+#         "User input: {user_input}\n"
+#         "Assistant:"
+#     ),
+# )
+
+user_conversations = {}
+
+# Modify the prompt in the existing code
+# Adding system instructions to guide the model
 prompt_chatgpt = PromptTemplate(
-    input_variables=["history", "user_input"],
+    input_variables=["history", "user_input"],  # Remove system_instructions from here
     template=(
-        "You are a helpful PACX AI assistant. You guide users through defining predictive questions and refining goals.\n"
-        # "If the user uploads a dataset, integrate the schema into the conversation to assist with column identification.\n\n"
+        "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+        "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+        "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
         "Steps:\n"
         "1. Discuss the Subject they want to predict.\n"
         "2. Confirm the Target Value they want to predict.\n"
         "3. Check if there's a specific time frame for the prediction.\n"
         "4. Reference the dataset schema if available.\n"
-        "5. Summarize inputs before proceeding to model creation.\n\n"
+        "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
         "Conversation history: {history}\n"
         "User input: {user_input}\n"
         "Assistant:"
     ),
 )
+from langchain.schema import SystemMessage
+
+memory = ConversationBufferMemory()
+memory.chat_memory.add_message(SystemMessage(content="You are a helpful PACX AI assistant. Follow the steps strictly and assist users with predictive questions."))
 
 conversation_chain_chatgpt = ConversationChain(
     llm=llm_chatgpt,
@@ -220,11 +248,17 @@ class UnifiedChatGPTAPI(APIView):
         Handles POST requests for both chat messages and file uploads.
         Differentiates based on the presence of files in the request.
         """
+        action = request.data.get('action', '')
+        if action == 'reset':
+            return self.reset_conversation(request)
         if "file" in request.FILES:  # If files are present, handle file uploads
             return self.handle_file_upload(request, request.FILES.getlist("file"))
 
         # Else, handle chat message
         return self.handle_chat(request)
+    
+    # def post(self, request):
+        
 
     def handle_file_upload(self, request, files: List[Any]):
         """
@@ -364,10 +398,29 @@ class UnifiedChatGPTAPI(APIView):
             print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
     
+    # def handle_chat(self, request):
+    #     """
+    #     Handles user chat messages using ChatGPT.
+    #     """
+    #     user_input = request.data.get("message", "").strip()
+    #     user_id = request.data.get("user_id", "default_user")
+
+    #     if not user_input:
+    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Fetch schema for the user session
+    #     uploaded_schema = UnifiedChatGPTAPI.uploaded_schema_by_user.get(user_id, "")
+
+    #     # Pass schema into the conversation prompt
+    #     assistant_response = conversation_chain_chatgpt.run(
+    #         user_input=f"{user_input}\n\nUploaded Schema:\n{uploaded_schema}"
+    #     )
+
+    #     return Response({
+    #         "response": assistant_response
+    #     })
+
     def handle_chat(self, request):
-        """
-        Handles user chat messages using ChatGPT.
-        """
         user_input = request.data.get("message", "").strip()
         user_id = request.data.get("user_id", "default_user")
 
@@ -377,14 +430,35 @@ class UnifiedChatGPTAPI(APIView):
         # Fetch schema for the user session
         uploaded_schema = UnifiedChatGPTAPI.uploaded_schema_by_user.get(user_id, "")
 
-        # Pass schema into the conversation prompt
-        assistant_response = conversation_chain_chatgpt.run(
+        # Get or create conversation chain for the user
+        if user_id not in user_conversations:
+            conversation_chain = ConversationChain(
+                llm=llm_chatgpt,
+                prompt=prompt_chatgpt,
+                input_key="user_input",
+                memory=ConversationBufferMemory()
+            )
+            user_conversations[user_id] = conversation_chain
+        else:
+            conversation_chain = user_conversations[user_id]
+
+        assistant_response = conversation_chain.run(
             user_input=f"{user_input}\n\nUploaded Schema:\n{uploaded_schema}"
         )
 
         return Response({
             "response": assistant_response
         })
+
+    def reset_conversation(self, request):
+        user_id = request.data.get("user_id", "default_user")
+        # Remove user's conversation chain
+        if user_id in user_conversations:
+            del user_conversations[user_id]
+        # Remove user's uploaded schema
+        if user_id in UnifiedChatGPTAPI.uploaded_schema_by_user:
+            del UnifiedChatGPTAPI.uploaded_schema_by_user[user_id]
+        return Response({"message": "Conversation reset successful."})
 
 
 

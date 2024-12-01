@@ -1,16 +1,5905 @@
 
+# # # # # # # # # #chat/views.py
+
+# # # # # # # # # import os
+# # # # # # # # # import datetime
+# # # # # # # # # from io import BytesIO
+# # # # # # # # # from typing import Any, Dict, List
+# # # # # # # # # from langchain.schema import AIMessage, HumanMessage
+# # # # # # # # # import boto3
+# # # # # # # # # import pandas as pd
+# # # # # # # # # import openai
+# # # # # # # # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # # # # # # # from django.conf import settings
+# # # # # # # # # from rest_framework import status
+# # # # # # # # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # # # # # # # from rest_framework.response import Response
+# # # # # # # # # from rest_framework.views import APIView
+# # # # # # # # # from langchain.chains import ConversationChain
+# # # # # # # # # from langchain.chat_models import ChatOpenAI
+# # # # # # # # # from langchain.prompts import PromptTemplate
+# # # # # # # # # from langchain.memory import ConversationBufferMemory
+# # # # # # # # # from .models import FileSchema, UploadedFile
+# # # # # # # # # from .serializers import UploadedFileSerializer
+
+# # # # # # # # # # ===========================
+# # # # # # # # # # AWS Configuration
+# # # # # # # # # # ===========================
+# # # # # # # # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # # # # # # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # # # # # # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # # # # # # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+
+# # # # # # # # # # ===========================
+# # # # # # # # # # OpenAI Configuration
+# # # # # # # # # # ===========================
+# # # # # # # # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # # # # # # # openai.api_key = OPENAI_API_KEY
+
+# # # # # # # # # # ===========================
+# # # # # # # # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # # # # # # # ===========================
+# # # # # # # # # llm_chatgpt = ChatOpenAI(
+# # # # # # # # #     model="gpt-3.5-turbo-16k",
+# # # # # # # # #     #  model="gpt-4",
+    
+# # # # # # # # #     # model = "gpt-4",
+
+# # # # # # # # #     temperature=0.7,
+# # # # # # # # #     openai_api_key=OPENAI_API_KEY,
+# # # # # # # # # )
+
+
+
+# # # # # # # # # user_conversations = {}
+
+# # # # # # # # # # Modify the prompt in the existing code
+# # # # # # # # # # Adding system instructions to guide the model
+# # # # # # # # # prompt_chatgpt = PromptTemplate(
+# # # # # # # # #     input_variables=["history", "user_input"],  # Remove system_instructions from here
+# # # # # # # # #     template=(
+# # # # # # # # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # # # # # # # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # # # # # # # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # # # # # # # #         "Steps:\n"
+# # # # # # # # #         "1. Discuss the Subject they want to predict.\n"
+# # # # # # # # #         "2. Confirm the Target Value they want to predict.\n"
+# # # # # # # # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # # # # # # # #         "4. Reference the dataset schema if available.\n"
+# # # # # # # # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # # # # # # # #         "Conversation history: {history}\n"
+# # # # # # # # #         "User input: {user_input}\n"
+# # # # # # # # #         "Assistant:"
+# # # # # # # # #     ),
+# # # # # # # # # )
+# # # # # # # # # from langchain.schema import SystemMessage
+
+# # # # # # # # # memory = ConversationBufferMemory()
+# # # # # # # # # memory.chat_memory.add_message(SystemMessage(content="You are a helpful PACX AI assistant. Follow the steps strictly and assist users with predictive questions."))
+
+# # # # # # # # # conversation_chain_chatgpt = ConversationChain(
+# # # # # # # # #     llm=llm_chatgpt,
+# # # # # # # # #     prompt=prompt_chatgpt,
+# # # # # # # # #     input_key="user_input",
+# # # # # # # # #     memory=ConversationBufferMemory(),  # Add memory instance
+# # # # # # # # # )
+
+# # # # # # # # # # ===========================
+# # # # # # # # # # Utility Functions
+# # # # # # # # # # ===========================
+# # # # # # # # # def get_s3_client():
+# # # # # # # # #     """
+# # # # # # # # #     Creates and returns an AWS S3 client.
+# # # # # # # # #     """
+# # # # # # # # #     return boto3.client(
+# # # # # # # # #         's3',
+# # # # # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # # # # #     )
+
+# # # # # # # # # def get_glue_client():
+# # # # # # # # #     """
+# # # # # # # # #     Creates and returns an AWS Glue client.
+# # # # # # # # #     """
+# # # # # # # # #     return boto3.client(
+# # # # # # # # #         'glue',
+# # # # # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # # # # #     )
+
+# # # # # # # # # def infer_column_dtype(series: pd.Series) -> str:
+# # # # # # # # #     """
+# # # # # # # # #     Infers the correct data type for a column by handling mixed types.
+# # # # # # # # #     """
+# # # # # # # # #     series = series.dropna().astype(str).str.strip()  # Handle mixed types and strip whitespace
+
+# # # # # # # # #     # Try boolean
+# # # # # # # # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # # # # # # # #     unique_values = set(series.str.lower().unique())
+# # # # # # # # #     if unique_values.issubset(boolean_values):
+# # # # # # # # #         return "boolean"
+
+# # # # # # # # #     # Try integer
+# # # # # # # # #     try:
+# # # # # # # # #         int_series = pd.to_numeric(series, errors='raise')
+# # # # # # # # #         if (int_series % 1 == 0).all():
+# # # # # # # # #             int_min = int_series.min()
+# # # # # # # # #             int_max = int_series.max()
+# # # # # # # # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # # # # # # # #                 return "int"
+# # # # # # # # #             else:
+# # # # # # # # #                 return "bigint"
+# # # # # # # # #     except ValueError:
+# # # # # # # # #         pass
+
+# # # # # # # # #     # Try double
+# # # # # # # # #     try:
+# # # # # # # # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # # # # # # # #         return "double"
+# # # # # # # # #     except ValueError:
+# # # # # # # # #         pass
+
+# # # # # # # # #     # Default to string
+# # # # # # # # #     return "string"
+
+# # # # # # # # # # def suggest_target_column(df: pd.DataFrame) -> Any:
+# # # # # # # # # #     """
+# # # # # # # # # #     Suggests a target column based on numeric data types.
+# # # # # # # # # #     """
+# # # # # # # # # #     numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
+# # # # # # # # # #     return numeric_cols[0] if len(numeric_cols) > 0 else None
+
+# # # # # # # # # def get_user_specified_target(chat_history: List[Any]) -> str:
+# # # # # # # # #     """
+# # # # # # # # #     Extracts user-specified target column from chat history if available.
+# # # # # # # # #     """
+# # # # # # # # #     for message in reversed(chat_history):  # Traverse messages in reverse order to find the latest target
+# # # # # # # # #         if isinstance(message, HumanMessage):  # Only check user messages
+# # # # # # # # #             if "target column" in message.content.lower():
+# # # # # # # # #                 # Extract the column name (customize regex as needed)
+# # # # # # # # #                 import re
+# # # # # # # # #                 match = re.search(r"target column: (\w+)", message.content, re.IGNORECASE)
+# # # # # # # # #                 if match:
+# # # # # # # # #                     return match.group(1)
+# # # # # # # # #     return None
+
+
+
+# # # # # # # # # from langchain.schema import HumanMessage
+
+# # # # # # # # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # # # # # # # #     """
+# # # # # # # # #     Suggests a target column based on user input or predictive question.
+# # # # # # # # #     """
+# # # # # # # # #     # Check if the user specified a target column
+# # # # # # # # #     user_target = get_user_specified_target(chat_history)
+# # # # # # # # #     if user_target and user_target in df.columns:
+# # # # # # # # #         return user_target
+
+# # # # # # # # #     # Use LLM to predict the target column based on a description (if available)
+# # # # # # # # #     target_suggestion_prompt = (
+# # # # # # # # #         f"The user uploaded a dataset with the following columns: {', '.join(df.columns)}.\n"
+# # # # # # # # #         "Based on the context of their predictive question, suggest the best target column."
+# # # # # # # # #     )
+# # # # # # # # #     response = llm_chatgpt.invoke([HumanMessage(content=target_suggestion_prompt)])
+# # # # # # # # #     suggested_column = response.content.strip()
+# # # # # # # # #     return suggested_column if suggested_column in df.columns else None
+
+
+# # # # # # # # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # # # # # # # #     """
+# # # # # # # # # #     Suggests an entity ID column based on uniqueness.
+# # # # # # # # # #     """
+# # # # # # # # # #     for col in df.columns:
+# # # # # # # # # #         if df[col].is_unique:
+# # # # # # # # # #             return col
+# # # # # # # # # #     return None
+
+# # # # # # # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # # # # # # #     """
+# # # # # # # # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # # # # # # # #     """
+# # # # # # # # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # # # # # # # #     for col in likely_id_columns:
+# # # # # # # # #         if df[col].nunique() / len(df) > 0.95:  # At least 95% unique values
+# # # # # # # # #             return col
+
+# # # # # # # # #     # Fallback: Find any column with >95% unique values
+# # # # # # # # #     for col in df.columns:
+# # # # # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # # # # #             return col
+# # # # # # # # #     return None
+
+
+
+
+# # # # # # # # # # ===========================
+# # # # # # # # # # Unified ChatGPT API
+# # # # # # # # # # ===========================
+# # # # # # # # # class UnifiedChatGPTAPI(APIView):
+# # # # # # # # #     """
+# # # # # # # # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # # # # # # # #     Endpoint: /api/chatgpt/
+# # # # # # # # #     """
+# # # # # # # # #     parser_classes = [MultiPartParser, FormParser, JSONParser]  # Include JSONParser
+# # # # # # # # #     uploaded_schema_by_user = {}
+
+    
+
+# # # # # # # # #     def post(self, request):
+# # # # # # # # #         """
+# # # # # # # # #         Handles POST requests for both chat messages and file uploads.
+# # # # # # # # #         Differentiates based on the presence of files in the request.
+# # # # # # # # #         """
+# # # # # # # # #         action = request.data.get('action', '')
+# # # # # # # # #         if action == 'reset':
+# # # # # # # # #             return self.reset_conversation(request)
+# # # # # # # # #         if "file" in request.FILES:  # If files are present, handle file uploads
+# # # # # # # # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # # # # # # # #         # Else, handle chat message
+# # # # # # # # #         return self.handle_chat(request)
+    
+# # # # # # # # #     # def post(self, request):
+        
+
+# # # # # # # # #     def handle_file_upload(self, request, files: List[Any]):
+# # # # # # # # #         """
+# # # # # # # # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # # # # # # # #         After processing, appends schema details to the chat messages.
+# # # # # # # # #         """
+
+# # # # # # # # #         files = request.FILES.getlist("file")
+# # # # # # # # #         if not files:
+# # # # # # # # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+        
+# # # # # # # # #         user_id = request.data.get("user_id", "default_user") 
+        
+        
+
+# # # # # # # # #         try:
+# # # # # # # # #             uploaded_files_info = []
+# # # # # # # # #             s3 = get_s3_client()
+# # # # # # # # #             glue = get_glue_client()
+
+# # # # # # # # #             for file in files:
+# # # # # # # # #                 # Validate file format
+# # # # # # # # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # # # # # # # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+                
+            
+# # # # # # # # #                 # Read file into Pandas DataFrame
+# # # # # # # # #                 if file.name.lower().endswith('.csv'):
+# # # # # # # # #                     df = pd.read_csv(file)
+# # # # # # # # #                 else:
+# # # # # # # # #                     df = pd.read_excel(file)
+
+# # # # # # # # #                 # Normalize column headers
+# # # # # # # # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # # # # # # # #                 # print(f"DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # # # # # # # #                 # Infer schema
+# # # # # # # # #                 schema = [
+# # # # # # # # #                     {
+# # # # # # # # #                         "column_name": col,
+# # # # # # # # #                         "data_type": infer_column_dtype(df[col])
+# # # # # # # # #                     }
+# # # # # # # # #                     for col in df.columns
+# # # # # # # # #                 ]
+# # # # # # # # #                 # print(f"Inferred schema: {schema}")  # Debugging statement
+
+# # # # # # # # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # # # # # # # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # # # # # # # #                 for col in boolean_columns:
+# # # # # # # # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # # # # # # # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # # # # # # # #                 # print(f"Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # # # # # # # #                 # Handle Duplicate Files Dynamically
+# # # # # # # # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # # # # # # # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # # # # # # # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # # # # # # # #                 if existing_file:
+# # # # # # # # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # # # # # # # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # # # # # # # #                     file.name = new_file_name
+# # # # # # # # #                     print(f"Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # # # # # # # #                 else:
+# # # # # # # # #                     print(f"File name is unique: {file.name}")  # Debugging statement
+
+# # # # # # # # #                 # Save Metadata to Database
+# # # # # # # # #                 file.seek(0)  # Reset file pointer before saving
+# # # # # # # # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # # # # # # # #                 if file_serializer.is_valid():
+# # # # # # # # #                     file_instance = file_serializer.save()
+
+# # # # # # # # #                     # Convert DataFrame to CSV and Upload to S3
+# # # # # # # # #                     csv_buffer = BytesIO()
+# # # # # # # # #                     df.to_csv(csv_buffer, index=False)
+# # # # # # # # #                     csv_buffer.seek(0)
+# # # # # # # # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # # # # # # # #                     file_key = f"uploads/{s3_file_name}"
+
+# # # # # # # # #                     # Upload to AWS S3
+# # # # # # # # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+
+# # # # # # # # #                     # Generate file URL
+# # # # # # # # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # # # # # # # #                     file_instance.file_url = file_url
+# # # # # # # # #                     file_instance.save()
+
+# # # # # # # # #                     # Save Schema to Database
+# # # # # # # # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+
+# # # # # # # # #                     # Trigger AWS Glue Table Update
+# # # # # # # # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # # # # # # # #                     # Append file info to response
+# # # # # # # # #                     uploaded_files_info.append({
+# # # # # # # # #                         'id': file_instance.id,
+# # # # # # # # #                         'name': file_instance.name,
+# # # # # # # # #                         'file_url': file_instance.file_url,
+# # # # # # # # #                         'schema': schema,
+# # # # # # # # #                         'suggestions': {  # Add suggestions based on the data
+# # # # # # # # #                             'target_column': suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages),
+# # # # # # # # #                             'entity_id_column': suggest_entity_id_column(df),
+# # # # # # # # #                         }
+# # # # # # # # #                     })
+                    
+# # # # # # # # #                 else:
+# # # # # # # # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # # #             # Format schema messages to append to assistant conversation
+# # # # # # # # #             schema_messages = [self.format_schema_message(uploaded_file) for uploaded_file in uploaded_files_info]
+# # # # # # # # #             combined_schema_message = "\n\n".join(schema_messages)
+# # # # # # # # #             # print(f"Combined schema message for chat: {combined_schema_message}")  # Debugging statement
+
+
+# # # # # # # # #             # Store schema for user
+# # # # # # # # #             UnifiedChatGPTAPI.uploaded_schema_by_user[user_id] = combined_schema_message
+
+# # # # # # # # #             if hasattr(conversation_chain_chatgpt.memory, "chat_memory"):
+# # # # # # # # #                 conversation_chain_chatgpt.memory.chat_memory.messages.append(
+# # # # # # # # #                     HumanMessage(content=f"Schema for '{file.name}': {combined_schema_message}")
+# # # # # # # # #                 )
+
+
+# # # # # # # # #             return Response({
+# # # # # # # # #                 "message": "Files uploaded and processed successfully.",
+# # # # # # # # #                 "uploaded_files": uploaded_files_info,
+# # # # # # # # #                 "chat_message": combined_schema_message  # Include chat_message in the response
+# # # # # # # # #             }, status=status.HTTP_201_CREATED)
+
+# # # # # # # # #         except pd.errors.EmptyDataError:
+# # # # # # # # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # # # # # # # #         except NoCredentialsError:
+# # # # # # # # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # # # # # # # #         except ClientError as e:
+# # # # # # # # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # # # # # # # #         except Exception as e:
+# # # # # # # # #             print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # # # # # # # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+    
+
+
+# # # # # # # # #     def handle_chat(self, request):
+# # # # # # # # #         user_input = request.data.get("message", "").strip()
+# # # # # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # # # # #         if not user_input:
+# # # # # # # # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # # #         # Fetch schema for the user session
+# # # # # # # # #         uploaded_schema = UnifiedChatGPTAPI.uploaded_schema_by_user.get(user_id, "")
+
+# # # # # # # # #         # Get or create conversation chain for the user
+# # # # # # # # #         if user_id not in user_conversations:
+# # # # # # # # #             conversation_chain = ConversationChain(
+# # # # # # # # #                 llm=llm_chatgpt,
+# # # # # # # # #                 prompt=prompt_chatgpt,
+# # # # # # # # #                 input_key="user_input",
+# # # # # # # # #                 memory=ConversationBufferMemory()
+# # # # # # # # #             )
+# # # # # # # # #             user_conversations[user_id] = conversation_chain
+# # # # # # # # #         else:
+# # # # # # # # #             conversation_chain = user_conversations[user_id]
+
+# # # # # # # # #         assistant_response = conversation_chain.run(
+# # # # # # # # #             user_input=f"{user_input}\n\nUploaded Schema:\n{uploaded_schema}"
+# # # # # # # # #         )
+
+# # # # # # # # #         return Response({
+# # # # # # # # #             "response": assistant_response
+# # # # # # # # #         })
+
+# # # # # # # # #     def reset_conversation(self, request):
+# # # # # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # # # # #         # Remove user's conversation chain
+# # # # # # # # #         if user_id in user_conversations:
+# # # # # # # # #             del user_conversations[user_id]
+# # # # # # # # #         # Remove user's uploaded schema
+# # # # # # # # #         if user_id in UnifiedChatGPTAPI.uploaded_schema_by_user:
+# # # # # # # # #             del UnifiedChatGPTAPI.uploaded_schema_by_user[user_id]
+# # # # # # # # #         return Response({"message": "Conversation reset successful."})
+
+
+
+    
+    
+
+
+    
+# # # # # # # # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # # # # # # # #         """
+# # # # # # # # #         Formats the schema information to be appended as an assistant message in the chat.
+# # # # # # # # #         """
+# # # # # # # # #         schema = uploaded_file['schema']
+# # # # # # # # #         target_column = uploaded_file['suggestions']['target_column']
+# # # # # # # # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # # # # # # # #         schema_text = (
+# # # # # # # # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # # # # # # # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # # # # # # # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # # # # # # # #             f"Target Column Suggestion: {target_column or 'None provided'}\n"
+# # # # # # # # #             f"Entity ID Column Suggestion: {entity_id_column or 'None provided'}\n\n"
+# # # # # # # # #             "Please confirm:\n\n"
+# # # # # # # # #             "- Is the Target Column correct?\n"
+# # # # # # # # #             "- Is the Entity ID Column correct?\n"
+# # # # # # # # #             '(Reply "yes" or provide the correct column names.)'
+# # # # # # # # #         )
+# # # # # # # # #         return schema_text
+
+
+# # # # # # # # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # # # # # # # #         """
+# # # # # # # # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # # # # # # # #         """
+# # # # # # # # #         glue = get_glue_client()
+# # # # # # # # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # # # # # # # #         storage_descriptor = {
+# # # # # # # # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # # # # # # # #             'Location': s3_location,
+# # # # # # # # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # # # # # # # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # # # # # # # #             'SerdeInfo': {
+# # # # # # # # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # # # # # # # #                 'Parameters': {
+# # # # # # # # #                     'field.delim': ',',
+# # # # # # # # #                     'skip.header.line.count': '1'
+# # # # # # # # #                 }
+# # # # # # # # #             }
+# # # # # # # # #         }
+# # # # # # # # #         try:
+# # # # # # # # #             glue.update_table(
+# # # # # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # # # # #                 TableInput={
+# # # # # # # # #                     'Name': table_name,
+# # # # # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # # # # #                 }
+# # # # # # # # #             )
+# # # # # # # # #             print(f"Glue table '{table_name}' updated successfully.")
+# # # # # # # # #         except glue.exceptions.EntityNotFoundException:
+# # # # # # # # #             print(f"Table '{table_name}' not found. Creating a new table...")
+# # # # # # # # #             glue.create_table(
+# # # # # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # # # # #                 TableInput={
+# # # # # # # # #                     'Name': table_name,
+# # # # # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # # # # #                 }
+# # # # # # # # #             )
+# # # # # # # # #             print(f"Glue table '{table_name}' created successfully.")
+# # # # # # # # #         except Exception as e:
+# # # # # # # # #             print(f"Glue operation failed: {str(e)}")
+
+
+
+
+
+# # # # # # # # # chat/views.py
+
+# # # # # # # # import os
+# # # # # # # # import datetime
+# # # # # # # # from io import BytesIO
+# # # # # # # # from typing import Any, Dict, List
+# # # # # # # # import boto3
+# # # # # # # # import pandas as pd
+# # # # # # # # import openai
+# # # # # # # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # # # # # # from django.conf import settings
+# # # # # # # # from rest_framework import status
+# # # # # # # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # # # # # # from rest_framework.response import Response
+# # # # # # # # from rest_framework.views import APIView
+# # # # # # # # from langchain.chains import ConversationChain
+# # # # # # # # from langchain.chat_models import ChatOpenAI
+# # # # # # # # from langchain.prompts import PromptTemplate
+# # # # # # # # from langchain.memory import ConversationBufferMemory
+# # # # # # # # from langchain.schema import AIMessage, HumanMessage, SystemMessage
+# # # # # # # # from .models import FileSchema, UploadedFile
+# # # # # # # # from .serializers import UploadedFileSerializer
+
+# # # # # # # # # ===========================
+# # # # # # # # # AWS Configuration
+# # # # # # # # # ===========================
+# # # # # # # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # # # # # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # # # # # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # # # # # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+
+# # # # # # # # # ===========================
+# # # # # # # # # OpenAI Configuration
+# # # # # # # # # ===========================
+# # # # # # # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # # # # # # openai.api_key = OPENAI_API_KEY
+
+# # # # # # # # # ===========================
+# # # # # # # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # # # # # # ===========================
+# # # # # # # # llm_chatgpt = ChatOpenAI(
+# # # # # # # #     model="gpt-3.5-turbo-16k",
+# # # # # # # #     temperature=0.7,
+# # # # # # # #     openai_api_key=OPENAI_API_KEY,
+# # # # # # # # )
+
+# # # # # # # # # Global dictionaries to store user-specific data
+# # # # # # # # user_conversations = {}
+# # # # # # # # user_schemas = {}
+# # # # # # # # user_confirmations = {}
+# # # # # # # # user_notebook_flags = {}
+
+# # # # # # # # # Modify the prompt in the existing code
+# # # # # # # # prompt_chatgpt = PromptTemplate(
+# # # # # # # #     input_variables=["history", "user_input"],
+# # # # # # # #     template=(
+# # # # # # # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # # # # # # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # # # # # # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # # # # # # #         "Steps:\n"
+# # # # # # # #         "1. Discuss the Subject they want to predict.\n"
+# # # # # # # #         "2. Confirm the Target Value they want to predict.\n"
+# # # # # # # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # # # # # # #         "4. Reference the dataset schema if available.\n"
+# # # # # # # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # # # # # # #         "Conversation history: {history}\n"
+# # # # # # # #         "User input: {user_input}\n"
+# # # # # # # #         "Assistant:"
+# # # # # # # #     ),
+# # # # # # # # )
+
+# # # # # # # # memory = ConversationBufferMemory()
+# # # # # # # # memory.chat_memory.add_message(SystemMessage(content="You are a helpful PACX AI assistant. Follow the steps strictly and assist users with predictive questions."))
+
+# # # # # # # # conversation_chain_chatgpt = ConversationChain(
+# # # # # # # #     llm=llm_chatgpt,
+# # # # # # # #     prompt=prompt_chatgpt,
+# # # # # # # #     input_key="user_input",
+# # # # # # # #     memory=ConversationBufferMemory(),
+# # # # # # # # )
+
+# # # # # # # # # ===========================
+# # # # # # # # # Utility Functions
+# # # # # # # # # ===========================
+
+# # # # # # # # def get_s3_client():
+# # # # # # # #     """
+# # # # # # # #     Creates and returns an AWS S3 client.
+# # # # # # # #     """
+# # # # # # # #     return boto3.client(
+# # # # # # # #         's3',
+# # # # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # # # #     )
+
+# # # # # # # # def get_glue_client():
+# # # # # # # #     """
+# # # # # # # #     Creates and returns an AWS Glue client.
+# # # # # # # #     """
+# # # # # # # #     return boto3.client(
+# # # # # # # #         'glue',
+# # # # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # # # #     )
+
+# # # # # # # # def infer_column_dtype(series: pd.Series) -> str:
+# # # # # # # #     """
+# # # # # # # #     Infers the correct data type for a column by handling mixed types.
+# # # # # # # #     """
+# # # # # # # #     series = series.dropna().astype(str).str.strip()
+
+# # # # # # # #     # Try datetime
+# # # # # # # #     try:
+# # # # # # # #         pd.to_datetime(series, errors='raise', infer_datetime_format=True)
+# # # # # # # #         return "timestamp"
+# # # # # # # #     except ValueError:
+# # # # # # # #         pass
+
+# # # # # # # #     # Try boolean
+# # # # # # # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # # # # # # #     unique_values = set(series.str.lower().unique())
+# # # # # # # #     if unique_values.issubset(boolean_values):
+# # # # # # # #         return "boolean"
+
+# # # # # # # #     # Try integer
+# # # # # # # #     try:
+# # # # # # # #         int_series = pd.to_numeric(series, errors='raise')
+# # # # # # # #         if (int_series % 1 == 0).all():
+# # # # # # # #             int_min = int_series.min()
+# # # # # # # #             int_max = int_series.max()
+# # # # # # # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # # # # # # #                 return "int"
+# # # # # # # #             else:
+# # # # # # # #                 return "bigint"
+# # # # # # # #     except ValueError:
+# # # # # # # #         pass
+
+# # # # # # # #     # Try double
+# # # # # # # #     try:
+# # # # # # # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # # # # # # #         return "double"
+# # # # # # # #     except ValueError:
+# # # # # # # #         pass
+
+# # # # # # # #     # Default to string
+# # # # # # # #     return "string"
+
+# # # # # # # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # # # # # # #     """
+# # # # # # # #     Suggests a target column based on user input or predictive question.
+# # # # # # # #     """
+# # # # # # # #     # Use the last column as a default suggestion
+# # # # # # # #     return df.columns[-1]
+
+# # # # # # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # # # # # #     """
+# # # # # # # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # # # # # # #     """
+# # # # # # # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # # # # # # #     for col in likely_id_columns:
+# # # # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # # # #             return col
+
+# # # # # # # #     # Fallback: Find any column with >95% unique values
+# # # # # # # #     for col in df.columns:
+# # # # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # # # #             return col
+# # # # # # # #     return None
+
+# # # # # # # # # ===========================
+# # # # # # # # # Unified ChatGPT API
+# # # # # # # # # ===========================
+# # # # # # # # class UnifiedChatGPTAPI(APIView):
+# # # # # # # #     """
+# # # # # # # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # # # # # # #     Endpoint: /api/chatgpt/
+# # # # # # # #     """
+# # # # # # # #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# # # # # # # #     def post(self, request):
+# # # # # # # #         """
+# # # # # # # #         Handles POST requests for chat messages and file uploads.
+# # # # # # # #         Differentiates based on the presence of files in the request.
+# # # # # # # #         """
+# # # # # # # #         action = request.data.get('action', '')
+# # # # # # # #         if action == 'reset':
+# # # # # # # #             return self.reset_conversation(request)
+# # # # # # # #         if "file" in request.FILES:
+# # # # # # # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # # # # # # #         # Handle 'Generate Notebook' action
+# # # # # # # #         if action == 'generate_notebook':
+# # # # # # # #             return self.generate_notebook(request)
+
+# # # # # # # #         # Else, handle chat message
+# # # # # # # #         return self.handle_chat(request)
+
+# # # # # # # #     def handle_file_upload(self, request, files: List[Any]):
+# # # # # # # #         """
+# # # # # # # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # # # # # # #         After processing, appends schema details to the chat messages.
+# # # # # # # #         """
+# # # # # # # #         files = request.FILES.getlist("file")
+# # # # # # # #         if not files:
+# # # # # # # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # # # #         try:
+# # # # # # # #             uploaded_files_info = []
+# # # # # # # #             s3 = get_s3_client()
+# # # # # # # #             glue = get_glue_client()
+
+# # # # # # # #             for file in files:
+# # # # # # # #                 # Validate file format
+# # # # # # # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # # # # # # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # #                 # Read file into Pandas DataFrame
+# # # # # # # #                 if file.name.lower().endswith('.csv'):
+# # # # # # # #                     df = pd.read_csv(file)
+# # # # # # # #                 else:
+# # # # # # # #                     df = pd.read_excel(file)
+
+# # # # # # # #                 # Normalize column headers
+# # # # # # # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # # # # # # #                 print(f"DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # # # # # # #                 # Infer schema with precision
+# # # # # # # #                 schema = [
+# # # # # # # #                     {
+# # # # # # # #                         "column_name": col,
+# # # # # # # #                         "data_type": infer_column_dtype(df[col])
+# # # # # # # #                     }
+# # # # # # # #                     for col in df.columns
+# # # # # # # #                 ]
+# # # # # # # #                 print(f"Inferred schema: {schema}")  # Debugging statement
+
+# # # # # # # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # # # # # # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # # # # # # #                 for col in boolean_columns:
+# # # # # # # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # # # # # # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # # # # # # #                 print(f"Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # # # # # # #                 # Handle Duplicate Files Dynamically
+# # # # # # # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # # # # # # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # # # # # # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # # # # # # #                 if existing_file:
+# # # # # # # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # # # # # # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # # # # # # #                     file.name = new_file_name
+# # # # # # # #                     print(f"Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # # # # # # #                 else:
+# # # # # # # #                     print(f"File name is unique: {file.name}")  # Debugging statement
+
+# # # # # # # #                 # Save Metadata to Database
+# # # # # # # #                 file.seek(0)
+# # # # # # # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # # # # # # #                 if file_serializer.is_valid():
+# # # # # # # #                     file_instance = file_serializer.save()
+
+# # # # # # # #                     # Convert DataFrame to CSV and Upload to S3
+# # # # # # # #                     csv_buffer = BytesIO()
+# # # # # # # #                     df.to_csv(csv_buffer, index=False)
+# # # # # # # #                     csv_buffer.seek(0)
+# # # # # # # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # # # # # # #                     file_key = f"uploads/{s3_file_name}"
+
+# # # # # # # #                     # Upload to AWS S3
+# # # # # # # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# # # # # # # #                     print(f"File uploaded to S3: {file_key}")  # Debugging statement
+
+# # # # # # # #                     # Generate file URL
+# # # # # # # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # # # # # # #                     file_instance.file_url = file_url
+# # # # # # # #                     file_instance.save()
+
+# # # # # # # #                     # Save Schema to Database
+# # # # # # # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# # # # # # # #                     print(f"Schema saved to database for file: {file.name}")  # Debugging statement
+
+# # # # # # # #                     # Trigger AWS Glue Table Update
+# # # # # # # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # # # # # # #                     # Append file info to response
+# # # # # # # #                     uploaded_files_info.append({
+# # # # # # # #                         'id': file_instance.id,
+# # # # # # # #                         'name': file_instance.name,
+# # # # # # # #                         'file_url': file_instance.file_url,
+# # # # # # # #                         'schema': schema,
+# # # # # # # #                         'suggestions': {
+# # # # # # # #                             'target_column': suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages),
+# # # # # # # #                             'entity_id_column': suggest_entity_id_column(df),
+# # # # # # # #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages)]]
+# # # # # # # #                         }
+# # # # # # # #                     })
+
+# # # # # # # #                 else:
+# # # # # # # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # #             # Store schema for user
+# # # # # # # #             user_schemas[user_id] = uploaded_files_info
+
+# # # # # # # #             # Initiate schema discussion with the user
+# # # # # # # #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# # # # # # # #             if hasattr(conversation_chain_chatgpt.memory, "chat_memory"):
+# # # # # # # #                 conversation_chain_chatgpt.memory.chat_memory.messages.append(
+# # # # # # # #                     AIMessage(content=schema_discussion)
+# # # # # # # #                 )
+# # # # # # # #             print(f"Schema discussion initiated: {schema_discussion}")  # Debugging statement
+
+# # # # # # # #             return Response({
+# # # # # # # #                 "message": "Files uploaded and processed successfully.",
+# # # # # # # #                 "uploaded_files": uploaded_files_info,
+# # # # # # # #                 "chat_message": schema_discussion
+# # # # # # # #             }, status=status.HTTP_201_CREATED)
+
+# # # # # # # #         except pd.errors.EmptyDataError:
+# # # # # # # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # # # # # # #         except NoCredentialsError:
+# # # # # # # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # # # # # # #         except ClientError as e:
+# # # # # # # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # # # # # # #         except Exception as e:
+# # # # # # # #             print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # # # # # # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # #     def handle_chat(self, request):
+# # # # # # # #         user_input = request.data.get("message", "").strip()
+# # # # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # # # #         if not user_input:
+# # # # # # # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # #         # Get or create conversation chain for the user
+# # # # # # # #         if user_id not in user_conversations:
+# # # # # # # #             conversation_chain = ConversationChain(
+# # # # # # # #                 llm=llm_chatgpt,
+# # # # # # # #                 prompt=prompt_chatgpt,
+# # # # # # # #                 input_key="user_input",
+# # # # # # # #                 memory=ConversationBufferMemory()
+# # # # # # # #             )
+# # # # # # # #             user_conversations[user_id] = conversation_chain
+# # # # # # # #         else:
+# # # # # # # #             conversation_chain = user_conversations[user_id]
+
+# # # # # # # #         # Check if user is confirming schema
+# # # # # # # #         if user_id in user_schemas and user_id not in user_confirmations:
+# # # # # # # #             # Process user confirmation
+# # # # # # # #             confirmation_response = self.process_schema_confirmation(user_input, user_id)
+# # # # # # # #             if confirmation_response:
+# # # # # # # #                 return Response({"response": confirmation_response})
+
+# # # # # # # #         # Generate assistant response
+# # # # # # # #         assistant_response = conversation_chain.run(user_input=user_input)
+# # # # # # # #         print(f"Assistant response: {assistant_response}")  # Debugging statement
+
+# # # # # # # #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# # # # # # # #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# # # # # # # #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# # # # # # # #             user_notebook_flags[user_id] = True  # Flag to show 'Generate Notebook' button
+# # # # # # # #             print("GENERATE_NOTEBOOK_PROMPT detected. Flagging to show 'Generate Notebook' button.")  # Debugging statement
+
+# # # # # # # #         return Response({
+# # # # # # # #             "response": assistant_response,
+# # # # # # # #             "show_generate_notebook": user_notebook_flags.get(user_id, False)
+# # # # # # # #         })
+
+# # # # # # # #     def process_schema_confirmation(self, user_input, user_id):
+# # # # # # # #         """
+# # # # # # # #         Processes user confirmation or adjustment of the schema.
+# # # # # # # #         """
+# # # # # # # #         uploaded_file_info = user_schemas[user_id][0]
+# # # # # # # #         suggestions = uploaded_file_info['suggestions']
+
+# # # # # # # #         # Assume user confirms or provides adjustments
+# # # # # # # #         if 'yes' in user_input.lower():
+# # # # # # # #             user_confirmations[user_id] = suggestions
+# # # # # # # #             return "Schema confirmed. You can now click 'Generate Notebook' to proceed."
+# # # # # # # #         else:
+# # # # # # # #             # Parse user adjustments
+# # # # # # # #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# # # # # # # #             if adjusted_columns:
+# # # # # # # #                 user_confirmations[user_id] = adjusted_columns
+# # # # # # # #                 return "Schema updated based on your inputs. You can now click 'Generate Notebook' to proceed."
+# # # # # # # #             else:
+# # # # # # # #                 return "Could not understand your adjustments. Please specify the correct 'Entity ID' and 'Target' column names."
+
+# # # # # # # #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# # # # # # # #         """
+# # # # # # # #         Parses user input for schema adjustments.
+# # # # # # # #         """
+# # # # # # # #         import re
+# # # # # # # #         entity_id_match = re.search(r"Entity ID Column: (\w+)", user_input, re.IGNORECASE)
+# # # # # # # #         target_column_match = re.search(r"Target Column: (\w+)", user_input, re.IGNORECASE)
+
+# # # # # # # #         suggestions = uploaded_file_info['suggestions']
+# # # # # # # #         entity_id_column = suggestions['entity_id_column']
+# # # # # # # #         target_column = suggestions['target_column']
+
+# # # # # # # #         if entity_id_match:
+# # # # # # # #             entity_id_column = entity_id_match.group(1)
+# # # # # # # #         if target_column_match:
+# # # # # # # #             target_column = target_column_match.group(1)
+
+# # # # # # # #         if entity_id_column and target_column:
+# # # # # # # #             return {
+# # # # # # # #                 'entity_id_column': entity_id_column,
+# # # # # # # #                 'target_column': target_column,
+# # # # # # # #                 'feature_columns': [col for col in uploaded_file_info['schema'] if col['column_name'] not in [entity_id_column, target_column]]
+# # # # # # # #             }
+# # # # # # # #         else:
+# # # # # # # #             return None
+
+# # # # # # # #     def reset_conversation(self, request):
+# # # # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # # # #         # Remove user's conversation chain
+# # # # # # # #         if user_id in user_conversations:
+# # # # # # # #             del user_conversations[user_id]
+# # # # # # # #         # Remove user's uploaded schema and confirmations
+# # # # # # # #         if user_id in user_schemas:
+# # # # # # # #             del user_schemas[user_id]
+# # # # # # # #         if user_id in user_confirmations:
+# # # # # # # #             del user_confirmations[user_id]
+# # # # # # # #         if user_id in user_notebook_flags:
+# # # # # # # #             del user_notebook_flags[user_id]
+# # # # # # # #         print(f"Conversation reset for user: {user_id}")  # Debugging statement
+# # # # # # # #         return Response({"message": "Conversation reset successful."})
+
+# # # # # # # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # # # # # # #         """
+# # # # # # # #         Formats the schema information to be appended as an assistant message in the chat.
+# # # # # # # #         """
+# # # # # # # #         schema = uploaded_file['schema']
+# # # # # # # #         target_column = uploaded_file['suggestions']['target_column']
+# # # # # # # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # # # # # # #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# # # # # # # #         schema_text = (
+# # # # # # # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # # # # # # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # # # # # # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # # # # # # #             f"Suggested Target Column: {target_column or 'None'}\n"
+# # # # # # # #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# # # # # # # #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # # # # # #             "Please confirm:\n"
+# # # # # # # #             "- Is the Target Column correct?\n"
+# # # # # # # #             "- Is the Entity ID Column correct?\n"
+# # # # # # # #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# # # # # # # #         )
+# # # # # # # #         return schema_text
+
+# # # # # # # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # # # # # # #         """
+# # # # # # # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # # # # # # #         """
+# # # # # # # #         glue = get_glue_client()
+# # # # # # # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # # # # # # #         storage_descriptor = {
+# # # # # # # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # # # # # # #             'Location': s3_location,
+# # # # # # # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # # # # # # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # # # # # # #             'SerdeInfo': {
+# # # # # # # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # # # # # # #                 'Parameters': {
+# # # # # # # #                     'field.delim': ',',
+# # # # # # # #                     'skip.header.line.count': '1'
+# # # # # # # #                 }
+# # # # # # # #             }
+# # # # # # # #         }
+# # # # # # # #         try:
+# # # # # # # #             glue.update_table(
+# # # # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # # # #                 TableInput={
+# # # # # # # #                     'Name': table_name,
+# # # # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # # # #                 }
+# # # # # # # #             )
+# # # # # # # #             print(f"Glue table '{table_name}' updated successfully.")  # Debugging statement
+# # # # # # # #         except glue.exceptions.EntityNotFoundException:
+# # # # # # # #             print(f"Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# # # # # # # #             glue.create_table(
+# # # # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # # # #                 TableInput={
+# # # # # # # #                     'Name': table_name,
+# # # # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # # # #                 }
+# # # # # # # #             )
+# # # # # # # #             print(f"Glue table '{table_name}' created successfully.")  # Debugging statement
+# # # # # # # #         except Exception as e:
+# # # # # # # #             print(f"Glue operation failed: {str(e)}")  # Debugging statement
+
+# # # # # # # #     def generate_notebook(self, request):
+# # # # # # # #         """
+# # # # # # # #         Generates a Jupyter Notebook with pre-filled SQL queries based on the confirmed schema.
+# # # # # # # #         """
+# # # # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # # # #         if user_id not in user_confirmations:
+# # # # # # # #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # # #         confirmation = user_confirmations[user_id]
+# # # # # # # #         entity_id_column = confirmation['entity_id_column']
+# # # # # # # #         target_column = confirmation['target_column']
+# # # # # # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # # # # # #         # Create Jupyter Notebook
+# # # # # # # #         notebook = self.create_notebook(entity_id_column, target_column, feature_columns)
+# # # # # # # #         print("Notebook generated successfully.")  # Debugging statement
+
+# # # # # # # #         # Return the notebook content
+# # # # # # # #         return Response({
+# # # # # # # #             "message": "Notebook generated successfully.",
+# # # # # # # #             "notebook": notebook
+# # # # # # # #         }, status=status.HTTP_200_OK)
+
+# # # # # # # #     def create_notebook(self, entity_id_column, target_column, feature_columns):
+# # # # # # # #         """
+# # # # # # # #         Creates a Jupyter Notebook with SQL queries.
+# # # # # # # #         """
+# # # # # # # #         import nbformat
+# # # # # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # # # # #         nb = new_notebook()
+# # # # # # # #         cells = []
+
+# # # # # # # #         # Introduction cell
+# # # # # # # #         cells.append(new_markdown_cell("# Exploratory Data Analysis Notebook"))
+
+# # # # # # # #         # Entity ID and Target analysis
+# # # # # # # #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM your_table_name LIMIT 100;"
+# # # # # # # #         cells.append(new_markdown_cell("## Entity ID and Target Column Analysis"))
+# # # # # # # #         cells.append(new_code_cell(f"%%sql\n{sql_query_entity_target}"))
+
+# # # # # # # #         # Feature columns analysis
+# # # # # # # #         for feature in feature_columns:
+# # # # # # # #             sql_query_feature = f"SELECT {feature}, COUNT(*) FROM your_table_name GROUP BY {feature} LIMIT 100;"
+# # # # # # # #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+# # # # # # # #             cells.append(new_code_cell(f"%%sql\n{sql_query_feature}"))
+
+# # # # # # # #         nb['cells'] = cells
+
+# # # # # # # #         # Convert notebook to JSON
+# # # # # # # #         notebook_json = nbformat.writes(nb)
+# # # # # # # #         return notebook_json
+
+
+
+# # # # # # # # chat/views.py
+
+# # # # # # # import os
+# # # # # # # import datetime
+# # # # # # # from io import BytesIO
+# # # # # # # from typing import Any, Dict, List
+# # # # # # # import boto3
+# # # # # # # import pandas as pd
+# # # # # # # import openai
+# # # # # # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # # # # # from django.conf import settings
+# # # # # # # from rest_framework import status
+# # # # # # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # # # # # from rest_framework.response import Response
+# # # # # # # from rest_framework.views import APIView
+# # # # # # # from langchain.chains import ConversationChain
+# # # # # # # from langchain.chat_models import ChatOpenAI
+# # # # # # # from langchain.prompts import PromptTemplate
+# # # # # # # from langchain.memory import ConversationBufferMemory
+# # # # # # # from langchain.schema import AIMessage, HumanMessage, SystemMessage
+# # # # # # # from .models import FileSchema, UploadedFile
+# # # # # # # from .serializers import UploadedFileSerializer
+
+# # # # # # # # ===========================
+# # # # # # # # AWS Configuration
+# # # # # # # # ===========================
+# # # # # # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # # # # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # # # # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # # # # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# # # # # # # AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # e.g., 's3://your-athena-query-results-bucket/'
+# # # # # # # AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # # # # # # # ===========================
+# # # # # # # # OpenAI Configuration
+# # # # # # # # ===========================
+# # # # # # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # # # # # openai.api_key = OPENAI_API_KEY
+
+# # # # # # # # ===========================
+# # # # # # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # # # # # ===========================
+# # # # # # # llm_chatgpt = ChatOpenAI(
+# # # # # # #     model="gpt-3.5-turbo-16k",
+# # # # # # #     temperature=0.7,
+# # # # # # #     openai_api_key=OPENAI_API_KEY,
+# # # # # # # )
+
+# # # # # # # # Global dictionaries to store user-specific data
+# # # # # # # user_conversations = {}
+# # # # # # # user_schemas = {}
+# # # # # # # user_confirmations = {}
+# # # # # # # user_notebook_flags = {}
+# # # # # # # user_notebooks = {}  # Stores generated notebooks for each user
+
+# # # # # # # # Modify the prompt in the existing code
+# # # # # # # prompt_chatgpt = PromptTemplate(
+# # # # # # #     input_variables=["history", "user_input"],
+# # # # # # #     template=(
+# # # # # # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # # # # # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # # # # # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # # # # # #         "Steps:\n"
+# # # # # # #         "1. Discuss the Subject they want to predict.\n"
+# # # # # # #         "2. Confirm the Target Value they want to predict.\n"
+# # # # # # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # # # # # #         "4. Reference the dataset schema if available.\n"
+# # # # # # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # # # # # #         "Conversation history: {history}\n"
+# # # # # # #         "User input: {user_input}\n"
+# # # # # # #         "Assistant:"
+# # # # # # #     ),
+# # # # # # # )
+
+# # # # # # # memory = ConversationBufferMemory()
+# # # # # # # memory.chat_memory.add_message(SystemMessage(content="You are a helpful PACX AI assistant. Follow the steps strictly and assist users with predictive questions."))
+
+# # # # # # # conversation_chain_chatgpt = ConversationChain(
+# # # # # # #     llm=llm_chatgpt,
+# # # # # # #     prompt=prompt_chatgpt,
+# # # # # # #     input_key="user_input",
+# # # # # # #     memory=ConversationBufferMemory(),
+# # # # # # # )
+
+# # # # # # # # ===========================
+# # # # # # # # Utility Functions
+# # # # # # # # ===========================
+
+# # # # # # # def get_s3_client():
+# # # # # # #     """
+# # # # # # #     Creates and returns an AWS S3 client.
+# # # # # # #     """
+# # # # # # #     return boto3.client(
+# # # # # # #         's3',
+# # # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # # #     )
+
+# # # # # # # def get_glue_client():
+# # # # # # #     """
+# # # # # # #     Creates and returns an AWS Glue client.
+# # # # # # #     """
+# # # # # # #     return boto3.client(
+# # # # # # #         'glue',
+# # # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # # #     )
+
+# # # # # # # def infer_column_dtype(series: pd.Series) -> str:
+# # # # # # #     """
+# # # # # # #     Infers the correct data type for a column by handling mixed types.
+# # # # # # #     """
+# # # # # # #     series = series.dropna().astype(str).str.strip()
+
+# # # # # # #     # Try datetime
+# # # # # # #     try:
+# # # # # # #         pd.to_datetime(series, errors='raise', infer_datetime_format=True)
+# # # # # # #         return "timestamp"
+# # # # # # #     except ValueError:
+# # # # # # #         pass
+
+# # # # # # #     # Try boolean
+# # # # # # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # # # # # #     unique_values = set(series.str.lower().unique())
+# # # # # # #     if unique_values.issubset(boolean_values):
+# # # # # # #         return "boolean"
+
+# # # # # # #     # Try integer
+# # # # # # #     try:
+# # # # # # #         int_series = pd.to_numeric(series, errors='raise')
+# # # # # # #         if (int_series % 1 == 0).all():
+# # # # # # #             int_min = int_series.min()
+# # # # # # #             int_max = int_series.max()
+# # # # # # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # # # # # #                 return "int"
+# # # # # # #             else:
+# # # # # # #                 return "bigint"
+# # # # # # #     except ValueError:
+# # # # # # #         pass
+
+# # # # # # #     # Try double
+# # # # # # #     try:
+# # # # # # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # # # # # #         return "double"
+# # # # # # #     except ValueError:
+# # # # # # #         pass
+
+# # # # # # #     # Default to string
+# # # # # # #     return "string"
+
+# # # # # # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # # # # # #     """
+# # # # # # #     Suggests a target column based on user input or predictive question.
+# # # # # # #     """
+# # # # # # #     # Use the last column as a default suggestion
+# # # # # # #     return df.columns[-1]
+
+# # # # # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # # # # #     """
+# # # # # # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # # # # # #     """
+# # # # # # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # # # # # #     for col in likely_id_columns:
+# # # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # # #             return col
+
+# # # # # # #     # Fallback: Find any column with >95% unique values
+# # # # # # #     for col in df.columns:
+# # # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # # #             return col
+# # # # # # #     return None
+
+# # # # # # # # ===========================
+# # # # # # # # Unified ChatGPT API
+# # # # # # # # ===========================
+# # # # # # # class UnifiedChatGPTAPI(APIView):
+# # # # # # #     """
+# # # # # # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # # # # # #     Endpoint: /api/chatgpt/
+# # # # # # #     """
+# # # # # # #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# # # # # # #     def post(self, request):
+# # # # # # #         """
+# # # # # # #         Handles POST requests for chat messages and file uploads.
+# # # # # # #         Differentiates based on the presence of files in the request.
+# # # # # # #         """
+# # # # # # #         action = request.data.get('action', '')
+# # # # # # #         if action == 'reset':
+# # # # # # #             return self.reset_conversation(request)
+# # # # # # #         if "file" in request.FILES:
+# # # # # # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # # # # # #         # Handle 'Generate Notebook' action
+# # # # # # #         if action == 'generate_notebook':
+# # # # # # #             return self.generate_notebook(request)
+
+# # # # # # #         # Else, handle chat message
+# # # # # # #         return self.handle_chat(request)
+
+# # # # # # #     def handle_file_upload(self, request, files: List[Any]):
+# # # # # # #         """
+# # # # # # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # # # # # #         After processing, appends schema details to the chat messages.
+# # # # # # #         """
+# # # # # # #         files = request.FILES.getlist("file")
+# # # # # # #         if not files:
+# # # # # # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # # #         try:
+# # # # # # #             uploaded_files_info = []
+# # # # # # #             s3 = get_s3_client()
+# # # # # # #             glue = get_glue_client()
+
+# # # # # # #             for file in files:
+# # # # # # #                 # Validate file format
+# # # # # # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # # # # # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #                 # Read file into Pandas DataFrame
+# # # # # # #                 if file.name.lower().endswith('.csv'):
+# # # # # # #                     df = pd.read_csv(file)
+# # # # # # #                 else:
+# # # # # # #                     df = pd.read_excel(file)
+
+# # # # # # #                 # Normalize column headers
+# # # # # # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # # # # # #                 print(f"DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # # # # # #                 # Infer schema with precision
+# # # # # # #                 schema = [
+# # # # # # #                     {
+# # # # # # #                         "column_name": col,
+# # # # # # #                         "data_type": infer_column_dtype(df[col])
+# # # # # # #                     }
+# # # # # # #                     for col in df.columns
+# # # # # # #                 ]
+# # # # # # #                 print(f"Inferred schema: {schema}")  # Debugging statement
+
+# # # # # # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # # # # # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # # # # # #                 for col in boolean_columns:
+# # # # # # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # # # # # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # # # # # #                 print(f"Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # # # # # #                 # Handle Duplicate Files Dynamically
+# # # # # # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # # # # # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # # # # # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # # # # # #                 if existing_file:
+# # # # # # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # # # # # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # # # # # #                     file.name = new_file_name
+# # # # # # #                     print(f"Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # # # # # #                 else:
+# # # # # # #                     print(f"File name is unique: {file.name}")  # Debugging statement
+
+# # # # # # #                 # Save Metadata to Database
+# # # # # # #                 file.seek(0)
+# # # # # # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # # # # # #                 if file_serializer.is_valid():
+# # # # # # #                     file_instance = file_serializer.save()
+
+# # # # # # #                     # Convert DataFrame to CSV and Upload to S3
+# # # # # # #                     csv_buffer = BytesIO()
+# # # # # # #                     df.to_csv(csv_buffer, index=False)
+# # # # # # #                     csv_buffer.seek(0)
+# # # # # # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # # # # # #                     file_key = f"uploads/{s3_file_name}"
+
+# # # # # # #                     # Upload to AWS S3
+# # # # # # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# # # # # # #                     print(f"File uploaded to S3: {file_key}")  # Debugging statement
+
+# # # # # # #                     # Generate file URL
+# # # # # # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # # # # # #                     file_instance.file_url = file_url
+# # # # # # #                     file_instance.save()
+
+# # # # # # #                     # Save Schema to Database
+# # # # # # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# # # # # # #                     print(f"Schema saved to database for file: {file.name}")  # Debugging statement
+
+# # # # # # #                     # Trigger AWS Glue Table Update
+# # # # # # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # # # # # #                     # Append file info to response
+# # # # # # #                     uploaded_files_info.append({
+# # # # # # #                         'id': file_instance.id,
+# # # # # # #                         'name': file_instance.name,
+# # # # # # #                         'file_url': file_instance.file_url,
+# # # # # # #                         'schema': schema,
+# # # # # # #                         'suggestions': {
+# # # # # # #                             'target_column': suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages),
+# # # # # # #                             'entity_id_column': suggest_entity_id_column(df),
+# # # # # # #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages)]]
+# # # # # # #                         }
+# # # # # # #                     })
+
+# # # # # # #                 else:
+# # # # # # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #             # Store schema for user
+# # # # # # #             user_schemas[user_id] = uploaded_files_info
+
+# # # # # # #             # Initiate schema discussion with the user
+# # # # # # #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# # # # # # #             if hasattr(conversation_chain_chatgpt.memory, "chat_memory"):
+# # # # # # #                 conversation_chain_chatgpt.memory.chat_memory.messages.append(
+# # # # # # #                     AIMessage(content=schema_discussion)
+# # # # # # #                 )
+# # # # # # #             print(f"Schema discussion initiated: {schema_discussion}")  # Debugging statement
+
+# # # # # # #             return Response({
+# # # # # # #                 "message": "Files uploaded and processed successfully.",
+# # # # # # #                 "uploaded_files": uploaded_files_info,
+# # # # # # #                 "chat_message": schema_discussion
+# # # # # # #             }, status=status.HTTP_201_CREATED)
+
+# # # # # # #         except pd.errors.EmptyDataError:
+# # # # # # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # # # # # #         except NoCredentialsError:
+# # # # # # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # # # # # #         except ClientError as e:
+# # # # # # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # # # # # #         except Exception as e:
+# # # # # # #             print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # # # # # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #     def handle_chat(self, request):
+# # # # # # #         user_input = request.data.get("message", "").strip()
+# # # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # # #         if not user_input:
+# # # # # # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #         # Get or create conversation chain for the user
+# # # # # # #         if user_id not in user_conversations:
+# # # # # # #             conversation_chain = ConversationChain(
+# # # # # # #                 llm=llm_chatgpt,
+# # # # # # #                 prompt=prompt_chatgpt,
+# # # # # # #                 input_key="user_input",
+# # # # # # #                 memory=ConversationBufferMemory()
+# # # # # # #             )
+# # # # # # #             user_conversations[user_id] = conversation_chain
+# # # # # # #         else:
+# # # # # # #             conversation_chain = user_conversations[user_id]
+
+# # # # # # #         # Check if user is confirming schema
+# # # # # # #         if user_id in user_schemas and user_id not in user_confirmations:
+# # # # # # #             # Process user confirmation
+# # # # # # #             confirmation_response = self.process_schema_confirmation(user_input, user_id)
+# # # # # # #             if confirmation_response:
+# # # # # # #                 return Response({"response": confirmation_response})
+
+# # # # # # #         # Generate assistant response
+# # # # # # #         assistant_response = conversation_chain.run(user_input=user_input)
+# # # # # # #         print(f"Assistant response: {assistant_response}")  # Debugging statement
+
+# # # # # # #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# # # # # # #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# # # # # # #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# # # # # # #             user_notebook_flags[user_id] = True  # Flag to show 'Generate Notebook' button
+# # # # # # #             print("GENERATE_NOTEBOOK_PROMPT detected. Flagging to show 'Generate Notebook' button.")  # Debugging statement
+
+# # # # # # #         return Response({
+# # # # # # #             "response": assistant_response,
+# # # # # # #             "show_generate_notebook": user_notebook_flags.get(user_id, False)
+# # # # # # #         })
+
+# # # # # # #     def process_schema_confirmation(self, user_input, user_id):
+# # # # # # #         """
+# # # # # # #         Processes user confirmation or adjustment of the schema.
+# # # # # # #         """
+# # # # # # #         uploaded_file_info = user_schemas[user_id][0]
+# # # # # # #         suggestions = uploaded_file_info['suggestions']
+
+# # # # # # #         # Assume user confirms or provides adjustments
+# # # # # # #         if 'yes' in user_input.lower():
+# # # # # # #             user_confirmations[user_id] = suggestions
+# # # # # # #             return "Schema confirmed. You can now click 'Generate Notebook' to proceed."
+# # # # # # #         else:
+# # # # # # #             # Parse user adjustments
+# # # # # # #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# # # # # # #             if adjusted_columns:
+# # # # # # #                 user_confirmations[user_id] = adjusted_columns
+# # # # # # #                 return "Schema updated based on your inputs. You can now click 'Generate Notebook' to proceed."
+# # # # # # #             else:
+# # # # # # #                 return "Could not understand your adjustments. Please specify the correct 'Entity ID' and 'Target' column names."
+
+# # # # # # #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# # # # # # #         """
+# # # # # # #         Parses user input for schema adjustments.
+# # # # # # #         """
+# # # # # # #         import re
+# # # # # # #         entity_id_match = re.search(r"Entity ID Column: (\w+)", user_input, re.IGNORECASE)
+# # # # # # #         target_column_match = re.search(r"Target Column: (\w+)", user_input, re.IGNORECASE)
+
+# # # # # # #         suggestions = uploaded_file_info['suggestions']
+# # # # # # #         entity_id_column = suggestions['entity_id_column']
+# # # # # # #         target_column = suggestions['target_column']
+
+# # # # # # #         if entity_id_match:
+# # # # # # #             entity_id_column = entity_id_match.group(1)
+# # # # # # #         if target_column_match:
+# # # # # # #             target_column = target_column_match.group(1)
+
+# # # # # # #         if entity_id_column and target_column:
+# # # # # # #             return {
+# # # # # # #                 'entity_id_column': entity_id_column,
+# # # # # # #                 'target_column': target_column,
+# # # # # # #                 'feature_columns': [col for col in uploaded_file_info['schema'] if col['column_name'] not in [entity_id_column, target_column]]
+# # # # # # #             }
+# # # # # # #         else:
+# # # # # # #             return None
+
+# # # # # # #     def reset_conversation(self, request):
+# # # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # # #         # Remove user's conversation chain
+# # # # # # #         if user_id in user_conversations:
+# # # # # # #             del user_conversations[user_id]
+# # # # # # #         # Remove user's uploaded schema and confirmations
+# # # # # # #         if user_id in user_schemas:
+# # # # # # #             del user_schemas[user_id]
+# # # # # # #         if user_id in user_confirmations:
+# # # # # # #             del user_confirmations[user_id]
+# # # # # # #         if user_id in user_notebook_flags:
+# # # # # # #             del user_notebook_flags[user_id]
+# # # # # # #         if user_id in user_notebooks:
+# # # # # # #             del user_notebooks[user_id]
+# # # # # # #         print(f"Conversation reset for user: {user_id}")  # Debugging statement
+# # # # # # #         return Response({"message": "Conversation reset successful."})
+
+# # # # # # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # # # # # #         """
+# # # # # # #         Formats the schema information to be appended as an assistant message in the chat.
+# # # # # # #         """
+# # # # # # #         schema = uploaded_file['schema']
+# # # # # # #         target_column = uploaded_file['suggestions']['target_column']
+# # # # # # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # # # # # #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# # # # # # #         schema_text = (
+# # # # # # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # # # # # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # # # # # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # # # # # #             f"Suggested Target Column: {target_column or 'None'}\n"
+# # # # # # #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# # # # # # #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # # # # #             "Please confirm:\n"
+# # # # # # #             "- Is the Target Column correct?\n"
+# # # # # # #             "- Is the Entity ID Column correct?\n"
+# # # # # # #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# # # # # # #         )
+# # # # # # #         return schema_text
+
+# # # # # # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # # # # # #         """
+# # # # # # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # # # # # #         """
+# # # # # # #         glue = get_glue_client()
+# # # # # # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # # # # # #         storage_descriptor = {
+# # # # # # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # # # # # #             'Location': s3_location,
+# # # # # # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # # # # # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # # # # # #             'SerdeInfo': {
+# # # # # # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # # # # # #                 'Parameters': {
+# # # # # # #                     'field.delim': ',',
+# # # # # # #                     'skip.header.line.count': '1'
+# # # # # # #                 }
+# # # # # # #             }
+# # # # # # #         }
+# # # # # # #         try:
+# # # # # # #             glue.update_table(
+# # # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # # #                 TableInput={
+# # # # # # #                     'Name': table_name,
+# # # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # # #                 }
+# # # # # # #             )
+# # # # # # #             print(f"Glue table '{table_name}' updated successfully.")  # Debugging statement
+# # # # # # #         except glue.exceptions.EntityNotFoundException:
+# # # # # # #             print(f"Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# # # # # # #             glue.create_table(
+# # # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # # #                 TableInput={
+# # # # # # #                     'Name': table_name,
+# # # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # # #                 }
+# # # # # # #             )
+# # # # # # #             print(f"Glue table '{table_name}' created successfully.")  # Debugging statement
+# # # # # # #         except Exception as e:
+# # # # # # #             print(f"Glue operation failed: {str(e)}")  # Debugging statement
+
+# # # # # # #     def generate_notebook(self, request):
+# # # # # # #         """
+# # # # # # #         Generates two Jupyter Notebooks with pre-filled SQL queries based on the confirmed schema.
+# # # # # # #         One for "Entity ID & Target", and another for "Features".
+# # # # # # #         """
+# # # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # # #         if user_id not in user_confirmations:
+# # # # # # #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #         confirmation = user_confirmations[user_id]
+# # # # # # #         entity_id_column = confirmation['entity_id_column']
+# # # # # # #         target_column = confirmation['target_column']
+# # # # # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # # # # #         # Get the table name from the uploaded file info
+# # # # # # #         if user_id in user_schemas:
+# # # # # # #             uploaded_file_info = user_schemas[user_id][0]
+# # # # # # #             table_name = os.path.splitext(uploaded_file_info['name'])[0].lower().replace(' ', '_')
+# # # # # # #         else:
+# # # # # # #             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # # #         # Create Jupyter Notebooks
+# # # # # # #         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name)
+# # # # # # #         notebook_features = self.create_features_notebook(feature_columns, table_name)
+
+# # # # # # #         # Store notebooks in user_notebooks dictionary
+# # # # # # #         user_notebooks[user_id] = {
+# # # # # # #             'entity_target_notebook': nbformat.writes(notebook_entity_target),
+# # # # # # #             'features_notebook': nbformat.writes(notebook_features)
+# # # # # # #         }
+
+# # # # # # #         print("Notebooks generated and stored successfully.")  # Debugging statement
+
+# # # # # # #         # Indicate success and that the "OPEN Notebook" button should be shown
+# # # # # # #         return Response({
+# # # # # # #             "message": "Notebooks generated successfully.",
+# # # # # # #             "show_open_notebook": True
+# # # # # # #         }, status=status.HTTP_200_OK)
+
+# # # # # # #     def create_entity_target_notebook(self, entity_id_column, target_column, table_name):
+# # # # # # #         """
+# # # # # # #         Creates a Jupyter Notebook for Entity ID and Target analysis.
+# # # # # # #         """
+# # # # # # #         import nbformat
+# # # # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # # # #         nb = new_notebook()
+# # # # # # #         cells = []
+
+# # # # # # #         # Introduction cell
+# # # # # # #         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+# # # # # # #         # Athena connection setup cell
+# # # # # # #         athena_s3_staging_dir = AWS_ATHENA_S3_STAGING_DIR
+# # # # # # #         aws_region = AWS_REGION_NAME
+
+# # # # # # #         cells.append(new_code_cell(
+# # # # # # #             f"""
+# # # # # # # import pandas as pd
+# # # # # # # from pyathena import connect
+
+# # # # # # # conn = connect(s3_staging_dir='{athena_s3_staging_dir}',
+# # # # # # #                region_name='{aws_region}')
+# # # # # # # """
+# # # # # # #         ))
+
+# # # # # # #         # Entity ID and Target analysis
+# # # # # # #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM {table_name} LIMIT 100;"
+# # # # # # #         cells.append(new_markdown_cell("## Entity ID and Target Column Analysis"))
+# # # # # # #         cells.append(new_code_cell(f"df = pd.read_sql(\"\"\"{sql_query_entity_target}\"\"\", conn)\ndf.head()"))
+
+# # # # # # #         nb['cells'] = cells
+
+# # # # # # #         return nb
+
+# # # # # # #     def create_features_notebook(self, feature_columns, table_name):
+# # # # # # #         """
+# # # # # # #         Creates a Jupyter Notebook for Features analysis.
+# # # # # # #         """
+# # # # # # #         import nbformat
+# # # # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # # # #         nb = new_notebook()
+# # # # # # #         cells = []
+
+# # # # # # #         # Introduction cell
+# # # # # # #         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+# # # # # # #         # Athena connection setup cell
+# # # # # # #         athena_s3_staging_dir = AWS_ATHENA_S3_STAGING_DIR
+# # # # # # #         aws_region = AWS_REGION_NAME
+
+# # # # # # #         cells.append(new_code_cell(
+# # # # # # #             f"""
+# # # # # # # import pandas as pd
+# # # # # # # from pyathena import connect
+
+# # # # # # # conn = connect(s3_staging_dir='{athena_s3_staging_dir}',
+# # # # # # #                region_name='{aws_region}')
+# # # # # # # """
+# # # # # # #         ))
+
+# # # # # # #         # Feature columns analysis
+# # # # # # #         for feature in feature_columns:
+# # # # # # #             sql_query_feature = f"SELECT {feature}, COUNT(*) FROM {table_name} GROUP BY {feature} LIMIT 100;"
+# # # # # # #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+# # # # # # #             cells.append(new_code_cell(f"df = pd.read_sql(\"\"\"{sql_query_feature}\"\"\", conn)\ndf.head()"))
+
+# # # # # # #         nb['cells'] = cells
+
+# # # # # # #         return nb
+
+
+# # # # # # # chat/views.py
+
+# # # # # # import os
+# # # # # # import datetime
+# # # # # # from io import BytesIO
+# # # # # # from typing import Any, Dict, List
+# # # # # # import boto3
+# # # # # # import pandas as pd
+# # # # # # import openai
+# # # # # # import json
+# # # # # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # # # # from django.conf import settings
+# # # # # # from rest_framework import status
+# # # # # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # # # # from rest_framework.response import Response
+# # # # # # from rest_framework.views import APIView
+# # # # # # from langchain.chains import ConversationChain
+# # # # # # from langchain.chat_models import ChatOpenAI
+# # # # # # from langchain.prompts import PromptTemplate
+# # # # # # from langchain.memory import ConversationBufferMemory
+# # # # # # from langchain.schema import AIMessage, HumanMessage, SystemMessage
+# # # # # # from .models import FileSchema, UploadedFile
+# # # # # # from .serializers import UploadedFileSerializer
+
+# # # # # # # ===========================
+# # # # # # # AWS Configuration
+# # # # # # # ===========================
+# # # # # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # # # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # # # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # # # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# # # # # # AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # e.g., 's3://your-athena-query-results-bucket/'
+# # # # # # AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # # # # # # ===========================
+# # # # # # # OpenAI Configuration
+# # # # # # # ===========================
+# # # # # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # # # # openai.api_key = OPENAI_API_KEY
+
+# # # # # # # ===========================
+# # # # # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # # # # ===========================
+# # # # # # llm_chatgpt = ChatOpenAI(
+# # # # # #     model="gpt-3.5-turbo-16k",
+# # # # # #     temperature=0.7,
+# # # # # #     openai_api_key=OPENAI_API_KEY,
+# # # # # # )
+
+# # # # # # # Global dictionaries to store user-specific data
+# # # # # # user_conversations = {}
+# # # # # # user_schemas = {}
+# # # # # # user_confirmations = {}
+# # # # # # user_notebook_flags = {}
+# # # # # # user_notebooks = {}  # Stores generated notebooks for each user
+
+# # # # # # # Modify the prompt in the existing code
+# # # # # # prompt_chatgpt = PromptTemplate(
+# # # # # #     input_variables=["history", "user_input"],
+# # # # # #     template=(
+# # # # # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # # # # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # # # # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # # # # #         "Steps:\n"
+# # # # # #         "1. Discuss the Subject they want to predict.\n"
+# # # # # #         "2. Confirm the Target Value they want to predict.\n"
+# # # # # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # # # # #         "4. Reference the dataset schema if available.\n"
+# # # # # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # # # # #         "Conversation history: {history}\n"
+# # # # # #         "User input: {user_input}\n"
+# # # # # #         "Assistant:"
+# # # # # #     ),
+# # # # # # )
+
+# # # # # # memory = ConversationBufferMemory()
+# # # # # # memory.chat_memory.add_message(SystemMessage(content="You are a helpful PACX AI assistant. Follow the steps strictly and assist users with predictive questions."))
+
+# # # # # # conversation_chain_chatgpt = ConversationChain(
+# # # # # #     llm=llm_chatgpt,
+# # # # # #     prompt=prompt_chatgpt,
+# # # # # #     input_key="user_input",
+# # # # # #     memory=ConversationBufferMemory(),
+# # # # # # )
+
+# # # # # # # ===========================
+# # # # # # # Utility Functions
+# # # # # # # ===========================
+
+# # # # # # def get_s3_client():
+# # # # # #     """
+# # # # # #     Creates and returns an AWS S3 client.
+# # # # # #     """
+# # # # # #     return boto3.client(
+# # # # # #         's3',
+# # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # #     )
+
+# # # # # # def get_glue_client():
+# # # # # #     """
+# # # # # #     Creates and returns an AWS Glue client.
+# # # # # #     """
+# # # # # #     return boto3.client(
+# # # # # #         'glue',
+# # # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # # #         region_name=AWS_S3_REGION_NAME
+# # # # # #     )
+
+# # # # # # def infer_column_dtype(series: pd.Series) -> str:
+# # # # # #     """
+# # # # # #     Infers the correct data type for a column by handling mixed types.
+# # # # # #     """
+# # # # # #     series = series.dropna().astype(str).str.strip()
+
+# # # # # #     # Try datetime
+# # # # # #     try:
+# # # # # #         pd.to_datetime(series, errors='raise', infer_datetime_format=True)
+# # # # # #         return "timestamp"
+# # # # # #     except ValueError:
+# # # # # #         pass
+
+# # # # # #     # Try boolean
+# # # # # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # # # # #     unique_values = set(series.str.lower().unique())
+# # # # # #     if unique_values.issubset(boolean_values):
+# # # # # #         return "boolean"
+
+# # # # # #     # Try integer
+# # # # # #     try:
+# # # # # #         int_series = pd.to_numeric(series, errors='raise')
+# # # # # #         if (int_series % 1 == 0).all():
+# # # # # #             int_min = int_series.min()
+# # # # # #             int_max = int_series.max()
+# # # # # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # # # # #                 return "int"
+# # # # # #             else:
+# # # # # #                 return "bigint"
+# # # # # #     except ValueError:
+# # # # # #         pass
+
+# # # # # #     # Try double
+# # # # # #     try:
+# # # # # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # # # # #         return "double"
+# # # # # #     except ValueError:
+# # # # # #         pass
+
+# # # # # #     # Default to string
+# # # # # #     return "string"
+
+# # # # # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # # # # #     """
+# # # # # #     Suggests a target column based on user input or predictive question.
+# # # # # #     """
+# # # # # #     # Use the last column as a default suggestion
+# # # # # #     return df.columns[-1]
+
+# # # # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # # # #     """
+# # # # # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # # # # #     """
+# # # # # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # # # # #     for col in likely_id_columns:
+# # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # #             return col
+
+# # # # # #     # Fallback: Find any column with >95% unique values
+# # # # # #     for col in df.columns:
+# # # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # # #             return col
+# # # # # #     return None
+
+# # # # # # # ===========================
+# # # # # # # Unified ChatGPT API
+# # # # # # # ===========================
+# # # # # # class UnifiedChatGPTAPI(APIView):
+# # # # # #     """
+# # # # # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # # # # #     Endpoint: /api/chatgpt/
+# # # # # #     """
+# # # # # #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# # # # # #     def post(self, request):
+# # # # # #         """
+# # # # # #         Handles POST requests for chat messages and file uploads.
+# # # # # #         Differentiates based on the presence of files in the request.
+# # # # # #         """
+# # # # # #         action = request.data.get('action', '')
+# # # # # #         if action == 'reset':
+# # # # # #             return self.reset_conversation(request)
+# # # # # #         if "file" in request.FILES:
+# # # # # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # # # # #         # Handle 'Generate Notebook' action
+# # # # # #         if action == 'generate_notebook':
+# # # # # #             return self.generate_notebook(request)
+
+# # # # # #         # Else, handle chat message
+# # # # # #         return self.handle_chat(request)
+
+# # # # # #     def handle_file_upload(self, request, files: List[Any]):
+# # # # # #         """
+# # # # # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # # # # #         After processing, appends schema details to the chat messages.
+# # # # # #         """
+# # # # # #         files = request.FILES.getlist("file")
+# # # # # #         if not files:
+# # # # # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # #         try:
+# # # # # #             uploaded_files_info = []
+# # # # # #             s3 = get_s3_client()
+# # # # # #             glue = get_glue_client()
+
+# # # # # #             for file in files:
+# # # # # #                 # Validate file format
+# # # # # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # # # # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #                 # Read file into Pandas DataFrame
+# # # # # #                 if file.name.lower().endswith('.csv'):
+# # # # # #                     df = pd.read_csv(file)
+# # # # # #                 else:
+# # # # # #                     df = pd.read_excel(file)
+
+# # # # # #                 # Normalize column headers
+# # # # # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # # # # #                 print(f"DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # # # # #                 # Infer schema with precision
+# # # # # #                 schema = [
+# # # # # #                     {
+# # # # # #                         "column_name": col,
+# # # # # #                         "data_type": infer_column_dtype(df[col])
+# # # # # #                     }
+# # # # # #                     for col in df.columns
+# # # # # #                 ]
+# # # # # #                 print(f"Inferred schema: {schema}")  # Debugging statement
+
+# # # # # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # # # # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # # # # #                 for col in boolean_columns:
+# # # # # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # # # # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # # # # #                 print(f"Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # # # # #                 # Handle Duplicate Files Dynamically
+# # # # # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # # # # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # # # # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # # # # #                 if existing_file:
+# # # # # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # # # # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # # # # #                     file.name = new_file_name
+# # # # # #                     print(f"Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # # # # #                 else:
+# # # # # #                     print(f"File name is unique: {file.name}")  # Debugging statement
+
+# # # # # #                 # Save Metadata to Database
+# # # # # #                 file.seek(0)
+# # # # # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # # # # #                 if file_serializer.is_valid():
+# # # # # #                     file_instance = file_serializer.save()
+
+# # # # # #                     # Convert DataFrame to CSV and Upload to S3
+# # # # # #                     csv_buffer = BytesIO()
+# # # # # #                     df.to_csv(csv_buffer, index=False)
+# # # # # #                     csv_buffer.seek(0)
+# # # # # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # # # # #                     file_key = f"uploads/{s3_file_name}"
+
+# # # # # #                     # Upload to AWS S3
+# # # # # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# # # # # #                     print(f"File uploaded to S3: {file_key}")  # Debugging statement
+
+# # # # # #                     # Generate file URL
+# # # # # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # # # # #                     file_instance.file_url = file_url
+# # # # # #                     file_instance.save()
+
+# # # # # #                     # Save Schema to Database
+# # # # # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# # # # # #                     print(f"Schema saved to database for file: {file.name}")  # Debugging statement
+
+# # # # # #                     # Trigger AWS Glue Table Update
+# # # # # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # # # # #                     # Append file info to response
+# # # # # #                     uploaded_files_info.append({
+# # # # # #                         'id': file_instance.id,
+# # # # # #                         'name': file_instance.name,
+# # # # # #                         'file_url': file_instance.file_url,
+# # # # # #                         'schema': schema,
+# # # # # #                         'suggestions': {
+# # # # # #                             'target_column': suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages),
+# # # # # #                             'entity_id_column': suggest_entity_id_column(df),
+# # # # # #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages)]]
+# # # # # #                         }
+# # # # # #                     })
+
+# # # # # #                 else:
+# # # # # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #             # Store schema for user
+# # # # # #             user_schemas[user_id] = uploaded_files_info
+
+# # # # # #             # Initiate schema discussion with the user
+# # # # # #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# # # # # #             if hasattr(conversation_chain_chatgpt.memory, "chat_memory"):
+# # # # # #                 conversation_chain_chatgpt.memory.chat_memory.messages.append(
+# # # # # #                     AIMessage(content=schema_discussion)
+# # # # # #                 )
+# # # # # #             print(f"Schema discussion initiated: {schema_discussion}")  # Debugging statement
+
+# # # # # #             return Response({
+# # # # # #                 "message": "Files uploaded and processed successfully.",
+# # # # # #                 "uploaded_files": uploaded_files_info,
+# # # # # #                 "chat_message": schema_discussion
+# # # # # #             }, status=status.HTTP_201_CREATED)
+
+# # # # # #         except pd.errors.EmptyDataError:
+# # # # # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # # # # #         except NoCredentialsError:
+# # # # # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # # # # #         except ClientError as e:
+# # # # # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # # # # #         except Exception as e:
+# # # # # #             print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # # # # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #     def handle_chat(self, request):
+# # # # # #         user_input = request.data.get("message", "").strip()
+# # # # # #         user_id = request.data.get("user_id", "default_user")
+
+# # # # # #         if not user_input:
+# # # # # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #         # Get or create conversation chain for the user
+# # # # # #         if user_id not in user_conversations:
+# # # # # #             conversation_chain = ConversationChain(
+# # # # # #                 llm=llm_chatgpt,
+# # # # # #                 prompt=prompt_chatgpt,
+# # # # # #                 input_key="user_input",
+# # # # # #                 memory=ConversationBufferMemory()
+# # # # # #             )
+# # # # # #             user_conversations[user_id] = conversation_chain
+# # # # # #         else:
+# # # # # #             conversation_chain = user_conversations[user_id]
+
+# # # # # #         # Check if user is confirming schema
+# # # # # #         if user_id in user_schemas and user_id not in user_confirmations:
+# # # # # #             # Process user confirmation
+# # # # # #             confirmation_response = self.process_schema_confirmation(user_input, user_id)
+# # # # # #             if confirmation_response:
+# # # # # #                 return Response({"response": confirmation_response})
+
+# # # # # #         # Generate assistant response
+# # # # # #         assistant_response = conversation_chain.run(user_input=user_input)
+# # # # # #         print(f"Assistant response: {assistant_response}")  # Debugging statement
+
+# # # # # #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# # # # # #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# # # # # #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# # # # # #             user_notebook_flags[user_id] = True  # Flag to show 'Generate Notebook' button
+# # # # # #             print("GENERATE_NOTEBOOK_PROMPT detected. Flagging to show 'Generate Notebook' button.")  # Debugging statement
+
+# # # # # #         return Response({
+# # # # # #             "response": assistant_response,
+# # # # # #             "show_generate_notebook": user_notebook_flags.get(user_id, False)
+# # # # # #         })
+
+# # # # # #     def process_schema_confirmation(self, user_input, user_id):
+# # # # # #         """
+# # # # # #         Processes user confirmation or adjustment of the schema.
+# # # # # #         """
+# # # # # #         uploaded_file_info = user_schemas[user_id][0]
+# # # # # #         suggestions = uploaded_file_info['suggestions']
+
+# # # # # #         # Assume user confirms or provides adjustments
+# # # # # #         if 'yes' in user_input.lower():
+# # # # # #             user_confirmations[user_id] = suggestions
+# # # # # #             return "Schema confirmed. You can now click 'Generate Notebook' to proceed."
+# # # # # #         else:
+# # # # # #             # Parse user adjustments
+# # # # # #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# # # # # #             if adjusted_columns:
+# # # # # #                 user_confirmations[user_id] = adjusted_columns
+# # # # # #                 return "Schema updated based on your inputs. You can now click 'Generate Notebook' to proceed."
+# # # # # #             else:
+# # # # # #                 return "Could not understand your adjustments. Please specify the correct 'Entity ID' and 'Target' column names."
+
+# # # # # #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# # # # # #         """
+# # # # # #         Parses user input for schema adjustments.
+# # # # # #         """
+# # # # # #         import re
+# # # # # #         entity_id_match = re.search(r"Entity ID Column: (\w+)", user_input, re.IGNORECASE)
+# # # # # #         target_column_match = re.search(r"Target Column: (\w+)", user_input, re.IGNORECASE)
+
+# # # # # #         suggestions = uploaded_file_info['suggestions']
+# # # # # #         entity_id_column = suggestions['entity_id_column']
+# # # # # #         target_column = suggestions['target_column']
+
+# # # # # #         if entity_id_match:
+# # # # # #             entity_id_column = entity_id_match.group(1)
+# # # # # #         if target_column_match:
+# # # # # #             target_column = target_column_match.group(1)
+
+# # # # # #         if entity_id_column and target_column:
+# # # # # #             return {
+# # # # # #                 'entity_id_column': entity_id_column,
+# # # # # #                 'target_column': target_column,
+# # # # # #                 'feature_columns': [col for col in uploaded_file_info['schema'] if col['column_name'] not in [entity_id_column, target_column]]
+# # # # # #             }
+# # # # # #         else:
+# # # # # #             return None
+
+# # # # # #     def reset_conversation(self, request):
+# # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # #         # Remove user's conversation chain
+# # # # # #         if user_id in user_conversations:
+# # # # # #             del user_conversations[user_id]
+# # # # # #         # Remove user's uploaded schema and confirmations
+# # # # # #         if user_id in user_schemas:
+# # # # # #             del user_schemas[user_id]
+# # # # # #         if user_id in user_confirmations:
+# # # # # #             del user_confirmations[user_id]
+# # # # # #         if user_id in user_notebook_flags:
+# # # # # #             del user_notebook_flags[user_id]
+# # # # # #         if user_id in user_notebooks:
+# # # # # #             del user_notebooks[user_id]
+# # # # # #         print(f"Conversation reset for user: {user_id}")  # Debugging statement
+# # # # # #         return Response({"message": "Conversation reset successful."})
+
+# # # # # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # # # # #         """
+# # # # # #         Formats the schema information to be appended as an assistant message in the chat.
+# # # # # #         """
+# # # # # #         schema = uploaded_file['schema']
+# # # # # #         target_column = uploaded_file['suggestions']['target_column']
+# # # # # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # # # # #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# # # # # #         schema_text = (
+# # # # # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # # # # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # # # # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # # # # #             f"Suggested Target Column: {target_column or 'None'}\n"
+# # # # # #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# # # # # #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # # # #             "Please confirm:\n"
+# # # # # #             "- Is the Target Column correct?\n"
+# # # # # #             "- Is the Entity ID Column correct?\n"
+# # # # # #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# # # # # #         )
+# # # # # #         return schema_text
+
+# # # # # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # # # # #         """
+# # # # # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # # # # #         """
+# # # # # #         glue = get_glue_client()
+# # # # # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # # # # #         storage_descriptor = {
+# # # # # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # # # # #             'Location': s3_location,
+# # # # # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # # # # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # # # # #             'SerdeInfo': {
+# # # # # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # # # # #                 'Parameters': {
+# # # # # #                     'field.delim': ',',
+# # # # # #                     'skip.header.line.count': '1'
+# # # # # #                 }
+# # # # # #             }
+# # # # # #         }
+# # # # # #         try:
+# # # # # #             glue.update_table(
+# # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # #                 TableInput={
+# # # # # #                     'Name': table_name,
+# # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # #                 }
+# # # # # #             )
+# # # # # #             print(f"Glue table '{table_name}' updated successfully.")  # Debugging statement
+# # # # # #         except glue.exceptions.EntityNotFoundException:
+# # # # # #             print(f"Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# # # # # #             glue.create_table(
+# # # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # # #                 TableInput={
+# # # # # #                     'Name': table_name,
+# # # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # # #                 }
+# # # # # #             )
+# # # # # #             print(f"Glue table '{table_name}' created successfully.")  # Debugging statement
+# # # # # #         except Exception as e:
+# # # # # #             print(f"Glue operation failed: {str(e)}")  # Debugging statement
+
+# # # # # #     def generate_notebook(self, request):
+# # # # # #         """
+# # # # # #         Generates two Jupyter Notebooks with pre-filled SQL queries based on the confirmed schema.
+# # # # # #         One for "Entity ID & Target", and another for "Features".
+# # # # # #         """
+# # # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # # #         if user_id not in user_confirmations:
+# # # # # #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #         confirmation = user_confirmations[user_id]
+# # # # # #         entity_id_column = confirmation['entity_id_column']
+# # # # # #         target_column = confirmation['target_column']
+# # # # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # # # #         # Get the table name from the uploaded file info
+# # # # # #         if user_id in user_schemas:
+# # # # # #             uploaded_file_info = user_schemas[user_id][0]
+# # # # # #             table_name = os.path.splitext(uploaded_file_info['name'])[0].lower().replace(' ', '_')
+# # # # # #         else:
+# # # # # #             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # # #         # Create Jupyter Notebooks with SQL queries
+# # # # # #         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name)
+# # # # # #         notebook_features = self.create_features_notebook(feature_columns, table_name)
+
+# # # # # #         # Store notebooks in user_notebooks dictionary
+# # # # # #         user_notebooks[user_id] = {
+# # # # # #             'entity_target_notebook': json.dumps(notebook_entity_target),
+# # # # # #             'features_notebook': json.dumps(notebook_features)
+# # # # # #         }
+
+# # # # # #         print("Notebooks generated and stored successfully.")  # Debugging statement
+
+# # # # # #         # Include the notebooks in the response
+# # # # # #         return Response({
+# # # # # #             "message": "Notebooks generated successfully.",
+# # # # # #             "show_open_notebook": True,
+# # # # # #             "notebooks": user_notebooks[user_id]
+# # # # # #         }, status=status.HTTP_200_OK)
+
+# # # # # #     def create_entity_target_notebook(self, entity_id_column, target_column, table_name):
+# # # # # #         """
+# # # # # #         Creates a Jupyter Notebook for Entity ID and Target analysis with SQL queries.
+# # # # # #         """
+# # # # # #         import nbformat
+# # # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # # #         nb = new_notebook()
+# # # # # #         cells = []
+
+# # # # # #         # Introduction cell
+# # # # # #         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+# # # # # #         # SQL query cell
+# # # # # #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM {table_name} LIMIT 100;"
+
+# # # # # #         # Add the SQL query to the cell
+# # # # # #         cells.append(new_code_cell(sql_query_entity_target))
+
+# # # # # #         nb['cells'] = cells
+
+# # # # # #         return nb
+
+# # # # # #     def create_features_notebook(self, feature_columns, table_name):
+# # # # # #         """
+# # # # # #         Creates a Jupyter Notebook for Features analysis with SQL queries.
+# # # # # #         """
+# # # # # #         import nbformat
+# # # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # # #         nb = new_notebook()
+# # # # # #         cells = []
+
+# # # # # #         # Introduction cell
+# # # # # #         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+# # # # # #         # Feature columns analysis
+# # # # # #         for feature in feature_columns:
+# # # # # #             sql_query_feature = f"SELECT {feature}, COUNT(*) FROM {table_name} GROUP BY {feature} LIMIT 100;"
+# # # # # #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+# # # # # #             cells.append(new_code_cell(sql_query_feature))
+
+# # # # # #         nb['cells'] = cells
+
+# # # # # #         return nb
+
+
+
+# # # # # # chat/views.py
+
+# # # # # import os
+# # # # # import datetime
+# # # # # from io import BytesIO
+# # # # # from typing import Any, Dict, List
+# # # # # import boto3
+# # # # # import pandas as pd
+# # # # # import openai
+# # # # # import json
+# # # # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # # # from django.conf import settings
+# # # # # from rest_framework import status
+# # # # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # # # from rest_framework.response import Response
+# # # # # from rest_framework.views import APIView
+# # # # # from langchain.chains import ConversationChain
+# # # # # from langchain.chat_models import ChatOpenAI
+# # # # # from langchain.prompts import PromptTemplate
+# # # # # from langchain.memory import ConversationBufferMemory
+# # # # # from langchain.schema import AIMessage, HumanMessage, SystemMessage
+# # # # # from .models import FileSchema, UploadedFile
+# # # # # from .serializers import UploadedFileSerializer
+
+# # # # # # ===========================
+# # # # # # AWS Configuration
+# # # # # # ===========================
+# # # # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# # # # # AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # e.g., 's3://your-athena-query-results-bucket/'
+# # # # # AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # # # # # ===========================
+# # # # # # OpenAI Configuration
+# # # # # # ===========================
+# # # # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # # # openai.api_key = OPENAI_API_KEY
+
+# # # # # # ===========================
+# # # # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # # # ===========================
+# # # # # llm_chatgpt = ChatOpenAI(
+# # # # #     model="gpt-3.5-turbo-16k",
+# # # # #     temperature=0.7,
+# # # # #     openai_api_key=OPENAI_API_KEY,
+# # # # # )
+
+# # # # # # Global dictionaries to store user-specific data
+# # # # # user_conversations = {}
+# # # # # user_schemas = {}
+# # # # # user_confirmations = {}
+# # # # # user_notebook_flags = {}
+# # # # # user_notebooks = {}  # Stores generated notebooks for each user
+
+# # # # # # Modify the prompt in the existing code
+# # # # # prompt_chatgpt = PromptTemplate(
+# # # # #     input_variables=["history", "user_input"],
+# # # # #     template=(
+# # # # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # # # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # # # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # # # #         "Steps:\n"
+# # # # #         "1. Discuss the Subject they want to predict.\n"
+# # # # #         "2. Confirm the Target Value they want to predict.\n"
+# # # # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # # # #         "4. Reference the dataset schema if available.\n"
+# # # # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # # # #         "Conversation history: {history}\n"
+# # # # #         "User input: {user_input}\n"
+# # # # #         "Assistant:"
+# # # # #     ),
+# # # # # )
+
+# # # # # # ===========================
+# # # # # # Utility Functions
+# # # # # # ===========================
+
+# # # # # def get_s3_client():
+# # # # #     """
+# # # # #     Creates and returns an AWS S3 client.
+# # # # #     """
+# # # # #     return boto3.client(
+# # # # #         's3',
+# # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # #         region_name=AWS_S3_REGION_NAME
+# # # # #     )
+
+# # # # # def get_glue_client():
+# # # # #     """
+# # # # #     Creates and returns an AWS Glue client.
+# # # # #     """
+# # # # #     return boto3.client(
+# # # # #         'glue',
+# # # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # # #         region_name=AWS_S3_REGION_NAME
+# # # # #     )
+
+# # # # # def infer_column_dtype(series: pd.Series) -> str:
+# # # # #     """
+# # # # #     Infers the correct data type for a column by handling mixed types.
+# # # # #     """
+# # # # #     series = series.dropna().astype(str).str.strip()
+
+# # # # #     # Try datetime
+# # # # #     try:
+# # # # #         pd.to_datetime(series, errors='raise')
+# # # # #         return "timestamp"
+# # # # #     except ValueError:
+# # # # #         pass
+
+# # # # #     # Try boolean
+# # # # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # # # #     unique_values = set(series.str.lower().unique())
+# # # # #     if unique_values.issubset(boolean_values):
+# # # # #         return "boolean"
+
+# # # # #     # Try integer
+# # # # #     try:
+# # # # #         int_series = pd.to_numeric(series, errors='raise')
+# # # # #         if (int_series % 1 == 0).all():
+# # # # #             int_min = int_series.min()
+# # # # #             int_max = int_series.max()
+# # # # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # # # #                 return "int"
+# # # # #             else:
+# # # # #                 return "bigint"
+# # # # #     except ValueError:
+# # # # #         pass
+
+# # # # #     # Try double
+# # # # #     try:
+# # # # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # # # #         return "double"
+# # # # #     except ValueError:
+# # # # #         pass
+
+# # # # #     # Default to string
+# # # # #     return "string"
+
+# # # # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # # # #     """
+# # # # #     Suggests a target column based on user input or predictive question.
+# # # # #     """
+# # # # #     # Use the last column as a default suggestion
+# # # # #     return df.columns[-1]
+
+# # # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # # #     """
+# # # # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # # # #     """
+# # # # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # # # #     for col in likely_id_columns:
+# # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # #             return col
+
+# # # # #     # Fallback: Find any column with >95% unique values
+# # # # #     for col in df.columns:
+# # # # #         if df[col].nunique() / len(df) > 0.95:
+# # # # #             return col
+# # # # #     return None
+
+# # # # # # ===========================
+# # # # # # Unified ChatGPT API
+# # # # # # ===========================
+# # # # # class UnifiedChatGPTAPI(APIView):
+# # # # #     """
+# # # # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # # # #     Endpoint: /api/chatgpt/
+# # # # #     """
+# # # # #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# # # # #     def post(self, request):
+# # # # #         """
+# # # # #         Handles POST requests for chat messages and file uploads.
+# # # # #         Differentiates based on the presence of files in the request.
+# # # # #         """
+# # # # #         action = request.data.get('action', '')
+# # # # #         if action == 'reset':
+# # # # #             return self.reset_conversation(request)
+# # # # #         if action == 'generate_notebook':
+# # # # #             return self.generate_notebook(request)
+# # # # #         if "file" in request.FILES:
+# # # # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # # # #         # Else, handle chat message
+# # # # #         return self.handle_chat(request)
+
+# # # # #     def handle_file_upload(self, request, files: List[Any]):
+# # # # #         """
+# # # # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # # # #         After processing, appends schema details to the chat messages.
+# # # # #         """
+# # # # #         files = request.FILES.getlist("file")
+# # # # #         if not files:
+# # # # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # #         print(f"[DEBUG] Handling file upload for user: {user_id}")
+
+# # # # #         try:
+# # # # #             uploaded_files_info = []
+# # # # #             s3 = get_s3_client()
+# # # # #             glue = get_glue_client()
+
+# # # # #             for file in files:
+# # # # #                 print(f"[DEBUG] Processing file: {file.name}")
+# # # # #                 # Validate file format
+# # # # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # # # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #                 # Read file into Pandas DataFrame
+# # # # #                 if file.name.lower().endswith('.csv'):
+# # # # #                     df = pd.read_csv(file)
+# # # # #                 else:
+# # # # #                     df = pd.read_excel(file)
+
+# # # # #                 # Normalize column headers
+# # # # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # # # #                 print(f"[DEBUG] DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # # # #                 # Infer schema with precision
+# # # # #                 schema = [
+# # # # #                     {
+# # # # #                         "column_name": col,
+# # # # #                         "data_type": infer_column_dtype(df[col])
+# # # # #                     }
+# # # # #                     for col in df.columns
+# # # # #                 ]
+# # # # #                 print(f"[DEBUG] Inferred schema: {schema}")  # Debugging statement
+
+# # # # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # # # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # # # #                 for col in boolean_columns:
+# # # # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # # # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # # # #                 print(f"[DEBUG] Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # # # #                 # Handle Duplicate Files Dynamically
+# # # # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # # # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # # # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # # # #                 if existing_file:
+# # # # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # # # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # # # #                     file.name = new_file_name
+# # # # #                     print(f"[DEBUG] Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # # # #                 else:
+# # # # #                     print(f"[DEBUG] File name is unique: {file.name}")  # Debugging statement
+
+# # # # #                 # Save Metadata to Database
+# # # # #                 file.seek(0)
+# # # # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # # # #                 if file_serializer.is_valid():
+# # # # #                     file_instance = file_serializer.save()
+
+# # # # #                     # Convert DataFrame to CSV and Upload to S3
+# # # # #                     csv_buffer = BytesIO()
+# # # # #                     df.to_csv(csv_buffer, index=False)
+# # # # #                     csv_buffer.seek(0)
+# # # # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # # # #                     file_key = f"uploads/{s3_file_name}"
+
+# # # # #                     # Upload to AWS S3
+# # # # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# # # # #                     print(f"[DEBUG] File uploaded to S3: {file_key}")  # Debugging statement
+
+# # # # #                     # Generate file URL
+# # # # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # # # #                     file_instance.file_url = file_url
+# # # # #                     file_instance.save()
+
+# # # # #                     # Save Schema to Database
+# # # # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# # # # #                     print(f"[DEBUG] Schema saved to database for file: {file.name}")  # Debugging statement
+
+# # # # #                     # Trigger AWS Glue Table Update
+# # # # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # # # #                     # Append file info to response
+# # # # #                     uploaded_files_info.append({
+# # # # #                         'id': file_instance.id,
+# # # # #                         'name': file_instance.name,
+# # # # #                         'file_url': file_instance.file_url,
+# # # # #                         'schema': schema,
+# # # # #                         'suggestions': {
+# # # # #                             'target_column': suggest_target_column(df, []),
+# # # # #                             'entity_id_column': suggest_entity_id_column(df),
+# # # # #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, [])]]
+# # # # #                         }
+# # # # #                     })
+
+# # # # #                 else:
+# # # # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #             # Store schema for user
+# # # # #             user_schemas[user_id] = uploaded_files_info
+# # # # #             print(f"[DEBUG] Stored schema for user: {user_id}")
+
+# # # # #             # Initiate schema discussion with the user
+# # # # #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# # # # #             print(f"[DEBUG] Schema discussion message: {schema_discussion}")  # Debugging statement
+
+# # # # #             # Create or get user's conversation chain
+# # # # #             if user_id not in user_conversations:
+# # # # #                 conversation_chain = ConversationChain(
+# # # # #                     llm=llm_chatgpt,
+# # # # #                     prompt=prompt_chatgpt,
+# # # # #                     input_key="user_input",
+# # # # #                     memory=ConversationBufferMemory()
+# # # # #                 )
+# # # # #                 user_conversations[user_id] = conversation_chain
+# # # # #             else:
+# # # # #                 conversation_chain = user_conversations[user_id]
+
+# # # # #             # Add the schema discussion to the assistant's messages
+# # # # #             conversation_chain.memory.chat_memory.messages.append(
+# # # # #                 AIMessage(content=schema_discussion)
+# # # # #             )
+
+# # # # #             return Response({
+# # # # #                 "message": "Files uploaded and processed successfully.",
+# # # # #                 "uploaded_files": uploaded_files_info,
+# # # # #                 "chat_message": schema_discussion
+# # # # #             }, status=status.HTTP_201_CREATED)
+
+# # # # #         except pd.errors.EmptyDataError:
+# # # # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # # # #         except NoCredentialsError:
+# # # # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # # # #         except ClientError as e:
+# # # # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # # # #         except Exception as e:
+# # # # #             print(f"[ERROR] Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # # # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #     def handle_chat(self, request):
+# # # # #         user_input = request.data.get("message", "").strip()
+# # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # #         print(f"[DEBUG] Handling chat for user: {user_id}, message: {user_input}")
+
+# # # # #         if not user_input:
+# # # # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #         # Get or create conversation chain for the user
+# # # # #         if user_id not in user_conversations:
+# # # # #             conversation_chain = ConversationChain(
+# # # # #                 llm=llm_chatgpt,
+# # # # #                 prompt=prompt_chatgpt,
+# # # # #                 input_key="user_input",
+# # # # #                 memory=ConversationBufferMemory()
+# # # # #             )
+# # # # #             user_conversations[user_id] = conversation_chain
+# # # # #         else:
+# # # # #             conversation_chain = user_conversations[user_id]
+
+# # # # #         # Check if user is confirming schema
+# # # # #         if user_id in user_schemas and user_id not in user_confirmations:
+# # # # #             # Process user confirmation
+# # # # #             assistant_response = self.process_schema_confirmation(user_input, user_id)
+# # # # #             return Response({"response": assistant_response, "show_generate_notebook": True})
+
+# # # # #         # Generate assistant response
+# # # # #         assistant_response = conversation_chain.run(user_input=user_input)
+# # # # #         print(f"[DEBUG] Assistant response: {assistant_response}")  # Debugging statement
+
+# # # # #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# # # # #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# # # # #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# # # # #             print(f"[DEBUG] GENERATE_NOTEBOOK_PROMPT detected for user: {user_id}")
+# # # # #             return Response({
+# # # # #                 "response": assistant_response,
+# # # # #                 "show_generate_notebook": True
+# # # # #             })
+
+# # # # #         return Response({
+# # # # #             "response": assistant_response
+# # # # #         })
+
+# # # # #     def process_schema_confirmation(self, user_input, user_id):
+# # # # #         """
+# # # # #         Processes user confirmation or adjustment of the schema.
+# # # # #         """
+# # # # #         uploaded_file_info = user_schemas[user_id][0]
+# # # # #         suggestions = uploaded_file_info['suggestions']
+
+# # # # #         # Assume user confirms or provides adjustments
+# # # # #         if 'yes' in user_input.lower():
+# # # # #             user_confirmations[user_id] = suggestions
+# # # # #             # Provide confirmed details and prompt to generate notebook
+# # # # #             assistant_response = self.format_confirmation_message(suggestions)
+# # # # #             return assistant_response
+# # # # #         else:
+# # # # #             # Parse user adjustments
+# # # # #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# # # # #             if adjusted_columns:
+# # # # #                 user_confirmations[user_id] = adjusted_columns
+# # # # #                 # Provide confirmed details and prompt to generate notebook
+# # # # #                 assistant_response = self.format_confirmation_message(adjusted_columns)
+# # # # #                 return assistant_response
+# # # # #             else:
+# # # # #                 return "Could not understand your adjustments. Please specify the correct 'Entity ID' and 'Target' column names."
+
+# # # # #     def format_confirmation_message(self, confirmation):
+# # # # #         """
+# # # # #         Formats the confirmation message with confirmed details and includes 'GENERATE_NOTEBOOK_PROMPT'.
+# # # # #         """
+# # # # #         entity_id_column = confirmation['entity_id_column']
+# # # # #         target_column = confirmation['target_column']
+# # # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # # #         confirmation_text = (
+# # # # #             f"Great! You've confirmed the following details:\n\n"
+# # # # #             f"Entity ID Column: {entity_id_column}\n"
+# # # # #             f"Target Column: {target_column}\n"
+# # # # #             f"Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # # #             "You can now generate the notebook to proceed with your analysis."
+# # # # #             "\n\nGENERATE_NOTEBOOK_PROMPT"
+# # # # #         )
+# # # # #         return confirmation_text
+
+# # # # #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# # # # #         """
+# # # # #         Parses user input for schema adjustments.
+# # # # #         """
+# # # # #         import re
+# # # # #         entity_id_match = re.search(r"Entity ID Column: (\w+)", user_input, re.IGNORECASE)
+# # # # #         target_column_match = re.search(r"Target Column: (\w+)", user_input, re.IGNORECASE)
+
+# # # # #         suggestions = uploaded_file_info['suggestions']
+# # # # #         entity_id_column = suggestions['entity_id_column']
+# # # # #         target_column = suggestions['target_column']
+
+# # # # #         if entity_id_match:
+# # # # #             entity_id_column = entity_id_match.group(1)
+# # # # #         if target_column_match:
+# # # # #             target_column = target_column_match.group(1)
+
+# # # # #         if entity_id_column and target_column:
+# # # # #             return {
+# # # # #                 'entity_id_column': entity_id_column,
+# # # # #                 'target_column': target_column,
+# # # # #                 'feature_columns': [col for col in uploaded_file_info['schema'] if col['column_name'] not in [entity_id_column, target_column]]
+# # # # #             }
+# # # # #         else:
+# # # # #             return None
+
+# # # # #     def reset_conversation(self, request):
+# # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # #         # Remove user's conversation chain
+# # # # #         if user_id in user_conversations:
+# # # # #             del user_conversations[user_id]
+# # # # #         # Remove user's uploaded schema and confirmations
+# # # # #         if user_id in user_schemas:
+# # # # #             del user_schemas[user_id]
+# # # # #         if user_id in user_confirmations:
+# # # # #             del user_confirmations[user_id]
+# # # # #         if user_id in user_notebook_flags:
+# # # # #             del user_notebook_flags[user_id]
+# # # # #         if user_id in user_notebooks:
+# # # # #             del user_notebooks[user_id]
+# # # # #         print(f"[DEBUG] Conversation reset for user: {user_id}")  # Debugging statement
+# # # # #         return Response({"message": "Conversation reset successful."})
+
+# # # # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # # # #         """
+# # # # #         Formats the schema information to be appended as an assistant message in the chat.
+# # # # #         """
+# # # # #         schema = uploaded_file['schema']
+# # # # #         target_column = uploaded_file['suggestions']['target_column']
+# # # # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # # # #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# # # # #         schema_text = (
+# # # # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # # # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # # # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # # # #             f"Suggested Target Column: {target_column or 'None'}\n"
+# # # # #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# # # # #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # # #             "Please confirm:\n"
+# # # # #             "- Is the Target Column correct?\n"
+# # # # #             "- Is the Entity ID Column correct?\n"
+# # # # #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# # # # #         )
+# # # # #         return schema_text
+
+# # # # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # # # #         """
+# # # # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # # # #         """
+# # # # #         glue = get_glue_client()
+# # # # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # # # #         storage_descriptor = {
+# # # # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # # # #             'Location': s3_location,
+# # # # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # # # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # # # #             'SerdeInfo': {
+# # # # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # # # #                 'Parameters': {
+# # # # #                     'field.delim': ',',
+# # # # #                     'skip.header.line.count': '1'
+# # # # #                 }
+# # # # #             }
+# # # # #         }
+# # # # #         try:
+# # # # #             glue.update_table(
+# # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # #                 TableInput={
+# # # # #                     'Name': table_name,
+# # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # #                 }
+# # # # #             )
+# # # # #             print(f"[DEBUG] Glue table '{table_name}' updated successfully.")  # Debugging statement
+# # # # #         except glue.exceptions.EntityNotFoundException:
+# # # # #             print(f"[DEBUG] Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# # # # #             glue.create_table(
+# # # # #                 DatabaseName='pa_user_datafiles_db',
+# # # # #                 TableInput={
+# # # # #                     'Name': table_name,
+# # # # #                     'StorageDescriptor': storage_descriptor,
+# # # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # # #                 }
+# # # # #             )
+# # # # #             print(f"[DEBUG] Glue table '{table_name}' created successfully.")  # Debugging statement
+# # # # #         except Exception as e:
+# # # # #             print(f"[ERROR] Glue operation failed: {str(e)}")  # Debugging statement
+
+# # # # #     def generate_notebook(self, request):
+# # # # #         """
+# # # # #         Generates notebooks with pre-filled SQL queries and executed results.
+# # # # #         """
+# # # # #         user_id = request.data.get("user_id", "default_user")
+# # # # #         print(f"[DEBUG] Generating notebook for user: {user_id}")
+
+# # # # #         if user_id not in user_confirmations:
+# # # # #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #         confirmation = user_confirmations[user_id]
+# # # # #         entity_id_column = confirmation['entity_id_column']
+# # # # #         target_column = confirmation['target_column']
+# # # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # # #         # Get the table name from the uploaded file info
+# # # # #         if user_id in user_schemas:
+# # # # #             uploaded_file_info = user_schemas[user_id][0]
+# # # # #             table_name = os.path.splitext(uploaded_file_info['name'])[0].lower().replace(' ', '_')
+# # # # #         else:
+# # # # #             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # # #         # Create notebooks with SQL queries and execute them to get results
+# # # # #         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name)
+# # # # #         notebook_features = self.create_features_notebook(feature_columns, table_name)
+
+# # # # #         # Store notebooks in user_notebooks dictionary
+# # # # #         user_notebooks[user_id] = {
+# # # # #             'entity_target_notebook': notebook_entity_target,
+# # # # #             'features_notebook': notebook_features
+# # # # #         }
+
+# # # # #         print("[DEBUG] Notebooks generated and stored successfully.")  # Debugging statement
+
+# # # # #         return Response({
+# # # # #             "message": "Notebooks generated successfully.",
+# # # # #             "notebooks": user_notebooks[user_id]
+# # # # #         }, status=status.HTTP_200_OK)
+
+# # # # #     def create_entity_target_notebook(self, entity_id_column, target_column, table_name):
+# # # # #         """
+# # # # #         Creates a notebook for Entity ID and Target analysis with SQL queries and executed results.
+# # # # #         """
+# # # # #         import nbformat
+# # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # #         nb = new_notebook()
+# # # # #         cells = []
+
+# # # # #         # Introduction cell
+# # # # #         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+# # # # #         # SQL query cell
+# # # # #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM {table_name} LIMIT 100;"
+
+# # # # #         # Add the SQL query to the cell
+# # # # #         cells.append(new_code_cell(sql_query_entity_target))
+
+# # # # #         # Execute the query and get results
+# # # # #         result = self.execute_sql_query(sql_query_entity_target)
+
+# # # # #         # Add the results to the notebook
+# # # # #         cells.append(new_code_cell(f"Result:\n{result}"))
+
+# # # # #         nb['cells'] = cells
+
+# # # # #         return nbformat.writes(nb)
+
+# # # # #     def create_features_notebook(self, feature_columns, table_name):
+# # # # #         """
+# # # # #         Creates a notebook for Features analysis with SQL queries and executed results.
+# # # # #         """
+# # # # #         import nbformat
+# # # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # # #         nb = new_notebook()
+# # # # #         cells = []
+
+# # # # #         # Introduction cell
+# # # # #         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+# # # # #         # Feature columns analysis
+# # # # #         for feature in feature_columns:
+# # # # #             sql_query_feature = f"SELECT {feature}, COUNT(*) FROM {table_name} GROUP BY {feature} LIMIT 100;"
+# # # # #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+# # # # #             cells.append(new_code_cell(sql_query_feature))
+
+# # # # #             # Execute the query and get results
+# # # # #             result = self.execute_sql_query(sql_query_feature)
+# # # # #             cells.append(new_code_cell(f"Result:\n{result}"))
+
+# # # # #         nb['cells'] = cells
+
+# # # # #         return nbformat.writes(nb)
+
+# # # # #     def execute_sql_query(self, query):
+# # # # #         """
+# # # # #         Executes a SQL query using AWS Athena and returns the results.
+# # # # #         """
+# # # # #         from pyathena import connect
+# # # # #         try:
+# # # # #             conn = connect(s3_staging_dir=AWS_ATHENA_S3_STAGING_DIR, region_name=AWS_REGION_NAME)
+# # # # #             df = pd.read_sql(query, conn)
+# # # # #             result = df.to_csv(index=False)
+# # # # #             print(f"[DEBUG] Query executed successfully: {query}")
+# # # # #             return result
+# # # # #         except Exception as e:
+# # # # #             print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
+# # # # #             return f"Error executing query: {str(e)}"
+
+
+
+
+# # # # # chat/views.py
+
+# # # # import os
+# # # # import datetime
+# # # # from io import BytesIO
+# # # # from typing import Any, Dict, List
+# # # # import boto3
+# # # # import pandas as pd
+# # # # import openai
+# # # # import json
+# # # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # # from django.conf import settings
+# # # # from rest_framework import status
+# # # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # # from rest_framework.response import Response
+# # # # from rest_framework.views import APIView
+# # # # from langchain.chains import ConversationChain
+# # # # from langchain.chat_models import ChatOpenAI
+# # # # from langchain.prompts import PromptTemplate
+# # # # from langchain.memory import ConversationBufferMemory
+# # # # from langchain.schema import AIMessage
+# # # # from .models import FileSchema, UploadedFile
+# # # # from .serializers import UploadedFileSerializer
+
+# # # # # ===========================
+# # # # # AWS Configuration
+# # # # # ===========================
+# # # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# # # # AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # e.g., 's3://your-athena-query-results-bucket/'
+# # # # AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # # # # Set the Athena database (schema) name
+# # # # ATHENA_SCHEMA_NAME = 'pa_user_datafiles_db'  # Replace with your actual Athena database name
+
+# # # # # ===========================
+# # # # # OpenAI Configuration
+# # # # # ===========================
+# # # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # # openai.api_key = OPENAI_API_KEY
+
+# # # # # ===========================
+# # # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # # ===========================
+# # # # llm_chatgpt = ChatOpenAI(
+# # # #     model="gpt-3.5-turbo-16k",
+# # # #     temperature=0.7,
+# # # #     openai_api_key=OPENAI_API_KEY,
+# # # # )
+
+# # # # # Global dictionaries to store user-specific data
+# # # # user_conversations = {}
+# # # # user_schemas = {}
+# # # # user_confirmations = {}
+# # # # user_notebook_flags = {}
+# # # # user_notebooks = {}  # Stores generated notebooks for each user
+
+# # # # # Modify the prompt in the existing code
+# # # # prompt_chatgpt = PromptTemplate(
+# # # #     input_variables=["history", "user_input"],
+# # # #     template=(
+# # # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # # #         "Steps:\n"
+# # # #         "1. Discuss the Subject they want to predict.\n"
+# # # #         "2. Confirm the Target Value they want to predict.\n"
+# # # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # # #         "4. Reference the dataset schema if available.\n"
+# # # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # # #         "Conversation history: {history}\n"
+# # # #         "User input: {user_input}\n"
+# # # #         "Assistant:"
+# # # #     ),
+# # # # )
+
+# # # # # ===========================
+# # # # # Utility Functions
+# # # # # ===========================
+
+# # # # def get_s3_client():
+# # # #     """
+# # # #     Creates and returns an AWS S3 client.
+# # # #     """
+# # # #     return boto3.client(
+# # # #         's3',
+# # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # #         region_name=AWS_S3_REGION_NAME
+# # # #     )
+
+# # # # def get_glue_client():
+# # # #     """
+# # # #     Creates and returns an AWS Glue client.
+# # # #     """
+# # # #     return boto3.client(
+# # # #         'glue',
+# # # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # #         region_name=AWS_S3_REGION_NAME
+# # # #     )
+
+# # # # def infer_column_dtype(series: pd.Series) -> str:
+# # # #     """
+# # # #     Infers the correct data type for a column by handling mixed types.
+# # # #     """
+# # # #     series = series.dropna().astype(str).str.strip()
+
+# # # #     # Try datetime
+# # # #     try:
+# # # #         pd.to_datetime(series, errors='raise')
+# # # #         return "timestamp"
+# # # #     except ValueError:
+# # # #         pass
+
+# # # #     # Try boolean
+# # # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # # #     unique_values = set(series.str.lower().unique())
+# # # #     if unique_values.issubset(boolean_values):
+# # # #         return "boolean"
+
+# # # #     # Try integer
+# # # #     try:
+# # # #         int_series = pd.to_numeric(series, errors='raise')
+# # # #         if (int_series % 1 == 0).all():
+# # # #             int_min = int_series.min()
+# # # #             int_max = int_series.max()
+# # # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # # #                 return "int"
+# # # #             else:
+# # # #                 return "bigint"
+# # # #     except ValueError:
+# # # #         pass
+
+# # # #     # Try double
+# # # #     try:
+# # # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # # #         return "double"
+# # # #     except ValueError:
+# # # #         pass
+
+# # # #     # Default to string
+# # # #     return "string"
+
+# # # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # # #     """
+# # # #     Suggests a target column based on user input or predictive question.
+# # # #     """
+# # # #     # Use the last column as a default suggestion
+# # # #     return df.columns[-1]
+
+# # # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # # #     """
+# # # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # # #     """
+# # # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # # #     for col in likely_id_columns:
+# # # #         if df[col].nunique() / len(df) > 0.95:
+# # # #             return col
+
+# # # #     # Fallback: Find any column with >95% unique values
+# # # #     for col in df.columns:
+# # # #         if df[col].nunique() / len(df) > 0.95:
+# # # #             return col
+# # # #     return None
+
+# # # # def execute_sql_query(query: str):
+# # # #     """
+# # # #     Executes a SQL query using AWS Athena and returns the results as a Pandas DataFrame.
+# # # #     """
+# # # #     from pyathena import connect
+# # # #     try:
+# # # #         conn = connect(
+# # # #             aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # # #             aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # # #             s3_staging_dir=AWS_ATHENA_S3_STAGING_DIR,
+# # # #             region_name=AWS_REGION_NAME,
+# # # #             schema_name=ATHENA_SCHEMA_NAME  # Specify the Athena database (schema)
+# # # #         )
+# # # #         df = pd.read_sql(query, conn)
+# # # #         print(f"[DEBUG] Query executed successfully: {query}")
+# # # #         return df
+# # # #     except Exception as e:
+# # # #         print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
+# # # #         return pd.DataFrame()  # Return an empty DataFrame on error
+
+# # # # # ===========================
+# # # # # Unified ChatGPT API
+# # # # # ===========================
+# # # # class UnifiedChatGPTAPI(APIView):
+# # # #     """
+# # # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # # #     Endpoint: /api/chatgpt/
+# # # #     """
+# # # #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# # # #     def post(self, request):
+# # # #         """
+# # # #         Handles POST requests for chat messages and file uploads.
+# # # #         Differentiates based on the presence of files in the request.
+# # # #         """
+# # # #         action = request.data.get('action', '')
+# # # #         if action == 'reset':
+# # # #             return self.reset_conversation(request)
+# # # #         if action == 'generate_notebook':
+# # # #             return self.generate_notebook(request)
+# # # #         if "file" in request.FILES:
+# # # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # # #         # Else, handle chat message
+# # # #         return self.handle_chat(request)
+
+# # # #     def handle_file_upload(self, request, files: List[Any]):
+# # # #         """
+# # # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # # #         After processing, appends schema details to the chat messages.
+# # # #         """
+# # # #         files = request.FILES.getlist("file")
+# # # #         if not files:
+# # # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #         user_id = request.data.get("user_id", "default_user")
+# # # #         print(f"[DEBUG] Handling file upload for user: {user_id}")
+
+# # # #         try:
+# # # #             uploaded_files_info = []
+# # # #             s3 = get_s3_client()
+# # # #             glue = get_glue_client()
+
+# # # #             for file in files:
+# # # #                 print(f"[DEBUG] Processing file: {file.name}")
+# # # #                 # Validate file format
+# # # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #                 # Read file into Pandas DataFrame
+# # # #                 if file.name.lower().endswith('.csv'):
+# # # #                     df = pd.read_csv(file)
+# # # #                 else:
+# # # #                     df = pd.read_excel(file)
+
+# # # #                 # Normalize column headers
+# # # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # # #                 print(f"[DEBUG] DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # # #                 # Infer schema with precision
+# # # #                 schema = [
+# # # #                     {
+# # # #                         "column_name": col,
+# # # #                         "data_type": infer_column_dtype(df[col])
+# # # #                     }
+# # # #                     for col in df.columns
+# # # #                 ]
+# # # #                 print(f"[DEBUG] Inferred schema: {schema}")  # Debugging statement
+
+# # # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # # #                 for col in boolean_columns:
+# # # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # # #                 print(f"[DEBUG] Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # # #                 # Handle Duplicate Files Dynamically
+# # # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # # #                 if existing_file:
+# # # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # # #                     file.name = new_file_name
+# # # #                     print(f"[DEBUG] Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # # #                 else:
+# # # #                     print(f"[DEBUG] File name is unique: {file.name}")  # Debugging statement
+
+# # # #                 # Save Metadata to Database
+# # # #                 file.seek(0)
+# # # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # # #                 if file_serializer.is_valid():
+# # # #                     file_instance = file_serializer.save()
+
+# # # #                     # Convert DataFrame to CSV and Upload to S3
+# # # #                     csv_buffer = BytesIO()
+# # # #                     df.to_csv(csv_buffer, index=False)
+# # # #                     csv_buffer.seek(0)
+# # # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # # #                     file_key = f"uploads/{s3_file_name}"
+
+# # # #                     # Upload to AWS S3
+# # # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# # # #                     print(f"[DEBUG] File uploaded to S3: {file_key}")  # Debugging statement
+
+# # # #                     # Generate file URL
+# # # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # # #                     file_instance.file_url = file_url
+# # # #                     file_instance.save()
+
+# # # #                     # Save Schema to Database
+# # # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# # # #                     print(f"[DEBUG] Schema saved to database for file: {file.name}")  # Debugging statement
+
+# # # #                     # Trigger AWS Glue Table Update
+# # # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # # #                     # Append file info to response
+# # # #                     uploaded_files_info.append({
+# # # #                         'id': file_instance.id,
+# # # #                         'name': file_instance.name,
+# # # #                         'file_url': file_instance.file_url,
+# # # #                         'schema': schema,
+# # # #                         'suggestions': {
+# # # #                             'target_column': suggest_target_column(df, []),
+# # # #                             'entity_id_column': suggest_entity_id_column(df),
+# # # #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, [])]]
+# # # #                         }
+# # # #                     })
+
+# # # #                 else:
+# # # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #             # Store schema for user
+# # # #             user_schemas[user_id] = uploaded_files_info
+# # # #             print(f"[DEBUG] Stored schema for user: {user_id}")
+
+# # # #             # Initiate schema discussion with the user
+# # # #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# # # #             print(f"[DEBUG] Schema discussion message: {schema_discussion}")  # Debugging statement
+
+# # # #             # Create or get user's conversation chain
+# # # #             if user_id not in user_conversations:
+# # # #                 conversation_chain = ConversationChain(
+# # # #                     llm=llm_chatgpt,
+# # # #                     prompt=prompt_chatgpt,
+# # # #                     input_key="user_input",
+# # # #                     memory=ConversationBufferMemory()
+# # # #                 )
+# # # #                 user_conversations[user_id] = conversation_chain
+# # # #             else:
+# # # #                 conversation_chain = user_conversations[user_id]
+
+# # # #             # Add the schema discussion to the assistant's messages
+# # # #             conversation_chain.memory.chat_memory.messages.append(
+# # # #                 AIMessage(content=schema_discussion)
+# # # #             )
+
+# # # #             return Response({
+# # # #                 "message": "Files uploaded and processed successfully.",
+# # # #                 "uploaded_files": uploaded_files_info,
+# # # #                 "chat_message": schema_discussion
+# # # #             }, status=status.HTTP_201_CREATED)
+
+# # # #         except pd.errors.EmptyDataError:
+# # # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # # #         except NoCredentialsError:
+# # # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # # #         except ClientError as e:
+# # # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # # #         except Exception as e:
+# # # #             print(f"[ERROR] Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #     def handle_chat(self, request):
+# # # #         user_input = request.data.get("message", "").strip()
+# # # #         user_id = request.data.get("user_id", "default_user")
+# # # #         print(f"[DEBUG] Handling chat for user: {user_id}, message: {user_input}")
+
+# # # #         if not user_input:
+# # # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #         # Get or create conversation chain for the user
+# # # #         if user_id not in user_conversations:
+# # # #             conversation_chain = ConversationChain(
+# # # #                 llm=llm_chatgpt,
+# # # #                 prompt=prompt_chatgpt,
+# # # #                 input_key="user_input",
+# # # #                 memory=ConversationBufferMemory()
+# # # #             )
+# # # #             user_conversations[user_id] = conversation_chain
+# # # #         else:
+# # # #             conversation_chain = user_conversations[user_id]
+
+# # # #         # Check if user is confirming schema
+# # # #         if user_id in user_schemas and user_id not in user_confirmations:
+# # # #             # Process user confirmation
+# # # #             assistant_response = self.process_schema_confirmation(user_input, user_id)
+# # # #             return Response({"response": assistant_response, "show_generate_notebook": True})
+
+# # # #         # Generate assistant response
+# # # #         assistant_response = conversation_chain.run(user_input=user_input)
+# # # #         print(f"[DEBUG] Assistant response: {assistant_response}")  # Debugging statement
+
+# # # #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# # # #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# # # #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# # # #             print(f"[DEBUG] GENERATE_NOTEBOOK_PROMPT detected for user: {user_id}")
+# # # #             return Response({
+# # # #                 "response": assistant_response,
+# # # #                 "show_generate_notebook": True
+# # # #             })
+
+# # # #         return Response({
+# # # #             "response": assistant_response
+# # # #         })
+
+# # # #     def process_schema_confirmation(self, user_input, user_id):
+# # # #         """
+# # # #         Processes user confirmation or adjustment of the schema.
+# # # #         """
+# # # #         uploaded_file_info = user_schemas[user_id][0]
+# # # #         suggestions = uploaded_file_info['suggestions']
+
+# # # #         # Assume user confirms or provides adjustments
+# # # #         if 'yes' in user_input.lower():
+# # # #             user_confirmations[user_id] = suggestions
+# # # #             # Provide confirmed details and prompt to generate notebook
+# # # #             assistant_response = self.format_confirmation_message(suggestions)
+# # # #             return assistant_response
+# # # #         else:
+# # # #             # Parse user adjustments
+# # # #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# # # #             if adjusted_columns:
+# # # #                 user_confirmations[user_id] = adjusted_columns
+# # # #                 # Provide confirmed details and prompt to generate notebook
+# # # #                 assistant_response = self.format_confirmation_message(adjusted_columns)
+# # # #                 return assistant_response
+# # # #             else:
+# # # #                 return "I couldn't find those columns in the dataset. Please specify valid column names for the Entity ID and Target columns."
+
+# # # #     def format_confirmation_message(self, confirmation):
+# # # #         """
+# # # #         Formats the confirmation message with confirmed details and includes 'GENERATE_NOTEBOOK_PROMPT'.
+# # # #         """
+# # # #         entity_id_column = confirmation['entity_id_column']
+# # # #         target_column = confirmation['target_column']
+# # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # #         confirmation_text = (
+# # # #             f"Great! You've confirmed the following details:\n\n"
+# # # #             f"Entity ID Column: {entity_id_column}\n"
+# # # #             f"Target Column: {target_column}\n"
+# # # #             f"Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # #             "You can now generate the notebook to proceed with your analysis."
+# # # #             "\n\nGENERATE_NOTEBOOK_PROMPT"
+# # # #         )
+# # # #         return confirmation_text
+
+# # # #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# # # #         """
+# # # #         Parses user input for schema adjustments.
+# # # #         """
+# # # #         import re
+
+# # # #         # Normalize the input
+# # # #         user_input = user_input.lower()
+
+# # # #         # Patterns to match possible ways the user might specify the columns
+# # # #         entity_id_patterns = [
+# # # #             r"entity\s*[:\-]?\s*(\w+)",
+# # # #             r"entity id\s*[:\-]?\s*(\w+)",
+# # # #             r"entity_id\s*[:\-]?\s*(\w+)",
+# # # #             r"entity column\s*[:\-]?\s*(\w+)",
+# # # #             r"entityid\s*[:\-]?\s*(\w+)",
+# # # #             r"id\s*[:\-]?\s*(\w+)"
+# # # #         ]
+
+# # # #         target_column_patterns = [
+# # # #             r"target\s*[:\-]?\s*(\w+)",
+# # # #             r"target column\s*[:\-]?\s*(\w+)",
+# # # #             r"predict\s*[:\-]?\s*(\w+)",
+# # # #             r"prediction\s*[:\-]?\s*(\w+)",
+# # # #             r"target is\s+(\w+)"
+# # # #         ]
+
+# # # #         entity_id_column = None
+# # # #         target_column = None
+
+# # # #         for pattern in entity_id_patterns:
+# # # #             match = re.search(pattern, user_input)
+# # # #             if match:
+# # # #                 entity_id_column = match.group(1)
+# # # #                 break
+
+# # # #         for pattern in target_column_patterns:
+# # # #             match = re.search(pattern, user_input)
+# # # #             if match:
+# # # #                 target_column = match.group(1)
+# # # #                 break
+
+# # # #         # Fallback to suggestions if not found
+# # # #         suggestions = uploaded_file_info['suggestions']
+# # # #         if not entity_id_column:
+# # # #             entity_id_column = suggestions['entity_id_column']
+# # # #         if not target_column:
+# # # #             target_column = suggestions['target_column']
+
+# # # #         # Check if the columns exist in the schema
+# # # #         schema_columns = [col['column_name'] for col in uploaded_file_info['schema']]
+# # # #         if entity_id_column not in schema_columns or target_column not in schema_columns:
+# # # #             return None
+
+# # # #         # Prepare feature columns
+# # # #         feature_columns = [col for col in schema_columns if col not in [entity_id_column, target_column]]
+
+# # # #         return {
+# # # #             'entity_id_column': entity_id_column,
+# # # #             'target_column': target_column,
+# # # #             'feature_columns': [{'column_name': col} for col in feature_columns]
+# # # #         }
+
+# # # #     def reset_conversation(self, request):
+# # # #         user_id = request.data.get("user_id", "default_user")
+# # # #         # Remove user's conversation chain
+# # # #         if user_id in user_conversations:
+# # # #             del user_conversations[user_id]
+# # # #         # Remove user's uploaded schema and confirmations
+# # # #         if user_id in user_schemas:
+# # # #             del user_schemas[user_id]
+# # # #         if user_id in user_confirmations:
+# # # #             del user_confirmations[user_id]
+# # # #         if user_id in user_notebook_flags:
+# # # #             del user_notebook_flags[user_id]
+# # # #         if user_id in user_notebooks:
+# # # #             del user_notebooks[user_id]
+# # # #         print(f"[DEBUG] Conversation reset for user: {user_id}")  # Debugging statement
+# # # #         return Response({"message": "Conversation reset successful."})
+
+# # # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # # #         """
+# # # #         Formats the schema information to be appended as an assistant message in the chat.
+# # # #         """
+# # # #         schema = uploaded_file['schema']
+# # # #         target_column = uploaded_file['suggestions']['target_column']
+# # # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # # #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# # # #         schema_text = (
+# # # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # # #             f"Suggested Target Column: {target_column or 'None'}\n"
+# # # #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# # # #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# # # #             "Please confirm:\n"
+# # # #             "- Is the Target Column correct?\n"
+# # # #             "- Is the Entity ID Column correct?\n"
+# # # #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# # # #         )
+# # # #         return schema_text
+
+# # # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # # #         """
+# # # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # # #         """
+# # # #         glue = get_glue_client()
+# # # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # # #         storage_descriptor = {
+# # # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # # #             'Location': s3_location,
+# # # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # # #             'SerdeInfo': {
+# # # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # # #                 'Parameters': {
+# # # #                     'field.delim': ',',
+# # # #                     'skip.header.line.count': '1'
+# # # #                 }
+# # # #             }
+# # # #         }
+# # # #         try:
+# # # #             glue.update_table(
+# # # #                 DatabaseName=ATHENA_SCHEMA_NAME,
+# # # #                 TableInput={
+# # # #                     'Name': table_name,
+# # # #                     'StorageDescriptor': storage_descriptor,
+# # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # #                 }
+# # # #             )
+# # # #             print(f"[DEBUG] Glue table '{table_name}' updated successfully.")  # Debugging statement
+# # # #         except glue.exceptions.EntityNotFoundException:
+# # # #             print(f"[DEBUG] Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# # # #             glue.create_table(
+# # # #                 DatabaseName=ATHENA_SCHEMA_NAME,
+# # # #                 TableInput={
+# # # #                     'Name': table_name,
+# # # #                     'StorageDescriptor': storage_descriptor,
+# # # #                     'TableType': 'EXTERNAL_TABLE'
+# # # #                 }
+# # # #             )
+# # # #             print(f"[DEBUG] Glue table '{table_name}' created successfully.")  # Debugging statement
+# # # #         except Exception as e:
+# # # #             print(f"[ERROR] Glue operation failed: {str(e)}")  # Debugging statement
+
+# # # #     def generate_notebook(self, request):
+# # # #         """
+# # # #         Generates notebooks with pre-filled SQL queries and executed results.
+# # # #         """
+# # # #         user_id = request.data.get("user_id", "default_user")
+# # # #         print(f"[DEBUG] Generating notebook for user: {user_id}")
+
+# # # #         if user_id not in user_confirmations:
+# # # #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #         confirmation = user_confirmations[user_id]
+# # # #         entity_id_column = confirmation['entity_id_column']
+# # # #         target_column = confirmation['target_column']
+# # # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # # #         # Get the table name from the uploaded file info
+# # # #         if user_id in user_schemas:
+# # # #             uploaded_file_info = user_schemas[user_id][0]
+# # # #             table_name = os.path.splitext(uploaded_file_info['name'])[0].lower().replace(' ', '_')
+# # # #         else:
+# # # #             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # # #         # Create notebooks with SQL queries and executed results
+# # # #         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name)
+# # # #         notebook_features = self.create_features_notebook(feature_columns, table_name)
+
+# # # #         # Store notebooks in user_notebooks dictionary
+# # # #         import nbformat
+# # # #         user_notebooks[user_id] = {
+# # # #             'entity_target_notebook': nbformat.writes(notebook_entity_target),
+# # # #             'features_notebook': nbformat.writes(notebook_features)
+# # # #         }
+
+# # # #         print("[DEBUG] Notebooks generated and stored successfully.")  # Debugging statement
+
+# # # #         return Response({
+# # # #             "message": "Notebooks generated successfully.",
+# # # #             "notebooks": user_notebooks[user_id]
+# # # #         }, status=status.HTTP_200_OK)
+
+# # # #     def create_entity_target_notebook(self, entity_id_column, target_column, table_name):
+# # # #         """
+# # # #         Creates a notebook for Entity ID and Target analysis with SQL queries and executed results.
+# # # #         """
+# # # #         import nbformat
+# # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # #         nb = new_notebook()
+# # # #         cells = []
+
+# # # #         # Introduction cell
+# # # #         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+# # # #         # SQL query cell
+# # # #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM {table_name} LIMIT 100;"
+
+# # # #         # Add the SQL query to the cell
+# # # #         cells.append(new_code_cell(f"-- SQL Query\n{sql_query_entity_target}"))
+
+# # # #         # Execute the query and get results
+# # # #         df_result = execute_sql_query(sql_query_entity_target)
+
+# # # #         # Add the results to the notebook as a pandas DataFrame display
+# # # #         if not df_result.empty:
+# # # #             result_markdown = df_result.to_markdown(index=False)
+# # # #             cells.append(new_markdown_cell(f"**Result:**\n\n{result_markdown}"))
+# # # #         else:
+# # # #             cells.append(new_markdown_cell("**Result:**\n\nNo data returned or an error occurred during query execution."))
+
+# # # #         nb['cells'] = cells
+
+# # # #         return nb
+
+# # # #     def create_features_notebook(self, feature_columns, table_name):
+# # # #         """
+# # # #         Creates a notebook for Features analysis with SQL queries and executed results.
+# # # #         """
+# # # #         import nbformat
+# # # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+
+# # # #         nb = new_notebook()
+# # # #         cells = []
+
+# # # #         # Introduction cell
+# # # #         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+# # # #         # Feature columns analysis
+# # # #         for feature in feature_columns:
+# # # #             # Add a markdown cell for each feature
+# # # #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+
+# # # #             # SQL query cell
+# # # #             sql_query_feature = f"SELECT {feature}, COUNT(*) as count FROM {table_name} GROUP BY {feature} ORDER BY count DESC LIMIT 100;"
+
+# # # #             cells.append(new_code_cell(f"-- SQL Query\n{sql_query_feature}"))
+
+# # # #             # Execute the query and get results
+# # # #             df_result = execute_sql_query(sql_query_feature)
+
+# # # #             # Add the results to the notebook as a pandas DataFrame display
+# # # #             if not df_result.empty:
+# # # #                 result_markdown = df_result.to_markdown(index=False)
+# # # #                 cells.append(new_markdown_cell(f"**Result:**\n\n{result_markdown}"))
+# # # #             else:
+# # # #                 cells.append(new_markdown_cell("**Result:**\n\nNo data returned or an error occurred during query execution."))
+
+# # # #         nb['cells'] = cells
+
+# # # #         return nb
+
+
+
+
+# # # # chat/views.py
+
+# # # import os
+# # # import datetime
+# # # from io import BytesIO
+# # # from typing import Any, Dict, List
+# # # import boto3
+# # # import pandas as pd
+# # # import openai
+# # # import json
+# # # from botocore.exceptions import ClientError, NoCredentialsError
+# # # from django.conf import settings
+# # # from rest_framework import status
+# # # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # # from rest_framework.response import Response
+# # # from rest_framework.views import APIView
+# # # from langchain.chains import ConversationChain
+# # # from langchain.chat_models import ChatOpenAI
+# # # from langchain.prompts import PromptTemplate
+# # # from langchain.memory import ConversationBufferMemory
+# # # from langchain.schema import AIMessage
+# # # from .models import FileSchema, UploadedFile
+# # # from .serializers import UploadedFileSerializer
+
+# # # # ===========================
+# # # # AWS Configuration
+# # # # ===========================
+# # # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# # # AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # e.g., 's3://your-athena-query-results-bucket/'
+# # # AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # # # Set the Athena database (schema) name
+# # # ATHENA_SCHEMA_NAME = 'pa_user_datafiles_db'  # Replace with your actual Athena database name
+
+# # # # ===========================
+# # # # OpenAI Configuration
+# # # # ===========================
+# # # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # # openai.api_key = OPENAI_API_KEY
+
+# # # # ===========================
+# # # # Initialize OpenAI LangChain model for ChatGPT
+# # # # ===========================
+# # # llm_chatgpt = ChatOpenAI(
+# # #     model="gpt-3.5-turbo-16k",
+# # #     temperature=0.7,
+# # #     openai_api_key=OPENAI_API_KEY,
+# # # )
+
+# # # # Global dictionaries to store user-specific data
+# # # user_conversations = {}
+# # # user_schemas = {}
+# # # user_confirmations = {}
+# # # user_notebook_flags = {}
+# # # user_notebooks = {}  # Stores generated notebooks for each user
+
+# # # # Modify the prompt in the existing code
+# # # prompt_chatgpt = PromptTemplate(
+# # #     input_variables=["history", "user_input"],
+# # #     template=(
+# # #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# # #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# # #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# # #         "Steps:\n"
+# # #         "1. Discuss the Subject they want to predict.\n"
+# # #         "2. Confirm the Target Value they want to predict.\n"
+# # #         "3. Check if there's a specific time frame for the prediction.\n"
+# # #         "4. Reference the dataset schema if available.\n"
+# # #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# # #         "Conversation history: {history}\n"
+# # #         "User input: {user_input}\n"
+# # #         "Assistant:"
+# # #     ),
+# # # )
+
+# # # # ===========================
+# # # # Utility Functions
+# # # # ===========================
+
+# # # def get_s3_client():
+# # #     """
+# # #     Creates and returns an AWS S3 client.
+# # #     """
+# # #     return boto3.client(
+# # #         's3',
+# # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # #         region_name=AWS_S3_REGION_NAME
+# # #     )
+
+# # # def get_glue_client():
+# # #     """
+# # #     Creates and returns an AWS Glue client.
+# # #     """
+# # #     return boto3.client(
+# # #         'glue',
+# # #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # #         region_name=AWS_S3_REGION_NAME
+# # #     )
+
+# # # def infer_column_dtype(series: pd.Series) -> str:
+# # #     """
+# # #     Infers the correct data type for a column by handling mixed types.
+# # #     """
+# # #     series = series.dropna().astype(str).str.strip()
+
+# # #     # Try datetime
+# # #     try:
+# # #         pd.to_datetime(series, errors='raise')
+# # #         return "timestamp"
+# # #     except ValueError:
+# # #         pass
+
+# # #     # Try boolean
+# # #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# # #     unique_values = set(series.str.lower().unique())
+# # #     if unique_values.issubset(boolean_values):
+# # #         return "boolean"
+
+# # #     # Try integer
+# # #     try:
+# # #         int_series = pd.to_numeric(series, errors='raise')
+# # #         if (int_series % 1 == 0).all():
+# # #             int_min = int_series.min()
+# # #             int_max = int_series.max()
+# # #             if int_min >= -2147483648 and int_max <= 2147483647:
+# # #                 return "int"
+# # #             else:
+# # #                 return "bigint"
+# # #     except ValueError:
+# # #         pass
+
+# # #     # Try double
+# # #     try:
+# # #         pd.to_numeric(series, errors='raise', downcast='float')
+# # #         return "double"
+# # #     except ValueError:
+# # #         pass
+
+# # #     # Default to string
+# # #     return "string"
+
+# # # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# # #     """
+# # #     Suggests a target column based on user input or predictive question.
+# # #     """
+# # #     # Use the last column as a default suggestion
+# # #     return df.columns[-1]
+
+# # # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# # #     """
+# # #     Suggests an entity ID column based on uniqueness and naming conventions.
+# # #     """
+# # #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# # #     for col in likely_id_columns:
+# # #         if df[col].nunique() / len(df) > 0.95:
+# # #             return col
+
+# # #     # Fallback: Find any column with >95% unique values
+# # #     for col in df.columns:
+# # #         if df[col].nunique() / len(df) > 0.95:
+# # #             return col
+# # #     return None
+
+# # # def execute_sql_query(query: str) -> pd.DataFrame:
+# # #     """
+# # #     Executes a SQL query using AWS Athena and returns the results as a Pandas DataFrame.
+# # #     """
+# # #     from pyathena import connect
+# # #     try:
+# # #         conn = connect(
+# # #             aws_access_key_id=AWS_ACCESS_KEY_ID,
+# # #             aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# # #             s3_staging_dir=AWS_ATHENA_S3_STAGING_DIR,
+# # #             region_name=AWS_REGION_NAME,
+# # #             schema_name=ATHENA_SCHEMA_NAME  # Specify the Athena database (schema)
+# # #         )
+# # #         df = pd.read_sql(query, conn)
+# # #         print(f"[DEBUG] Query executed successfully: {query}")
+# # #         return df
+# # #     except Exception as e:
+# # #         print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
+# # #         return pd.DataFrame()  # Return an empty DataFrame on error
+
+# # # # ===========================
+# # # # Unified ChatGPT API
+# # # # ===========================
+# # # class UnifiedChatGPTAPI(APIView):
+# # #     """
+# # #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# # #     Endpoint: /api/chatgpt/
+# # #     """
+# # #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# # #     def post(self, request):
+# # #         """
+# # #         Handles POST requests for chat messages and file uploads.
+# # #         Differentiates based on the presence of files in the request.
+# # #         """
+# # #         action = request.data.get('action', '')
+# # #         if action == 'reset':
+# # #             return self.reset_conversation(request)
+# # #         if action == 'generate_notebook':
+# # #             return self.generate_notebook(request)
+# # #         if "file" in request.FILES:
+# # #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# # #         # Else, handle chat message
+# # #         return self.handle_chat(request)
+
+# # #     def handle_file_upload(self, request, files: List[Any]):
+# # #         """
+# # #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# # #         After processing, appends schema details to the chat messages.
+# # #         """
+# # #         files = request.FILES.getlist("file")
+# # #         if not files:
+# # #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # #         user_id = request.data.get("user_id", "default_user")
+# # #         print(f"[DEBUG] Handling file upload for user: {user_id}")
+
+# # #         try:
+# # #             uploaded_files_info = []
+# # #             s3 = get_s3_client()
+# # #             glue = get_glue_client()
+
+# # #             for file in files:
+# # #                 print(f"[DEBUG] Processing file: {file.name}")
+# # #                 # Validate file format
+# # #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# # #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # #                 # Read file into Pandas DataFrame
+# # #                 if file.name.lower().endswith('.csv'):
+# # #                     df = pd.read_csv(file)
+# # #                 else:
+# # #                     df = pd.read_excel(file)
+
+# # #                 # Normalize column headers
+# # #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# # #                 print(f"[DEBUG] DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# # #                 # Infer schema with precision
+# # #                 schema = [
+# # #                     {
+# # #                         "column_name": col,
+# # #                         "data_type": infer_column_dtype(df[col])
+# # #                     }
+# # #                     for col in df.columns
+# # #                 ]
+# # #                 print(f"[DEBUG] Inferred schema: {schema}")  # Debugging statement
+
+# # #                 # Convert Boolean Columns to 'true'/'false' Strings
+# # #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# # #                 for col in boolean_columns:
+# # #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# # #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# # #                 print(f"[DEBUG] Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# # #                 # Handle Duplicate Files Dynamically
+# # #                 file_name_base, file_extension = os.path.splitext(file.name)
+# # #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# # #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# # #                 if existing_file:
+# # #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# # #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# # #                     file.name = new_file_name
+# # #                     print(f"[DEBUG] Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# # #                 else:
+# # #                     print(f"[DEBUG] File name is unique: {file.name}")  # Debugging statement
+
+# # #                 # Save Metadata to Database
+# # #                 file.seek(0)
+# # #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# # #                 if file_serializer.is_valid():
+# # #                     file_instance = file_serializer.save()
+
+# # #                     # Convert DataFrame to CSV and Upload to S3
+# # #                     csv_buffer = BytesIO()
+# # #                     df.to_csv(csv_buffer, index=False)
+# # #                     csv_buffer.seek(0)
+# # #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# # #                     file_key = f"uploads/{s3_file_name}"
+
+# # #                     # Upload to AWS S3
+# # #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# # #                     print(f"[DEBUG] File uploaded to S3: {file_key}")  # Debugging statement
+
+# # #                     # Generate file URL
+# # #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# # #                     file_instance.file_url = file_url
+# # #                     file_instance.save()
+
+# # #                     # Save Schema to Database
+# # #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# # #                     print(f"[DEBUG] Schema saved to database for file: {file.name}")  # Debugging statement
+
+# # #                     # Trigger AWS Glue Table Update
+# # #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# # #                     # Append file info to response
+# # #                     uploaded_files_info.append({
+# # #                         'id': file_instance.id,
+# # #                         'name': file_instance.name,
+# # #                         'file_url': file_instance.file_url,
+# # #                         'schema': schema,
+# # #                         'suggestions': {
+# # #                             'target_column': suggest_target_column(df, []),
+# # #                             'entity_id_column': suggest_entity_id_column(df),
+# # #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, [])]]
+# # #                         }
+# # #                     })
+
+# # #                 else:
+# # #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# # #             # Store schema for user
+# # #             user_schemas[user_id] = uploaded_files_info
+# # #             print(f"[DEBUG] Stored schema for user: {user_id}")
+
+# # #             # Initiate schema discussion with the user
+# # #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# # #             print(f"[DEBUG] Schema discussion message: {schema_discussion}")  # Debugging statement
+
+# # #             # Create or get user's conversation chain
+# # #             if user_id not in user_conversations:
+# # #                 conversation_chain = ConversationChain(
+# # #                     llm=llm_chatgpt,
+# # #                     prompt=prompt_chatgpt,
+# # #                     input_key="user_input",
+# # #                     memory=ConversationBufferMemory()
+# # #                 )
+# # #                 user_conversations[user_id] = conversation_chain
+# # #             else:
+# # #                 conversation_chain = user_conversations[user_id]
+
+# # #             # Add the schema discussion to the assistant's messages
+# # #             conversation_chain.memory.chat_memory.messages.append(
+# # #                 AIMessage(content=schema_discussion)
+# # #             )
+
+# # #             return Response({
+# # #                 "message": "Files uploaded and processed successfully.",
+# # #                 "uploaded_files": uploaded_files_info,
+# # #                 "chat_message": schema_discussion
+# # #             }, status=status.HTTP_201_CREATED)
+
+# # #         except pd.errors.EmptyDataError:
+# # #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# # #         except NoCredentialsError:
+# # #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# # #         except ClientError as e:
+# # #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# # #         except Exception as e:
+# # #             print(f"[ERROR] Unexpected error during file upload: {str(e)}")  # Debugging statement
+# # #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# # #     def handle_chat(self, request):
+# # #         user_input = request.data.get("message", "").strip()
+# # #         user_id = request.data.get("user_id", "default_user")
+# # #         print(f"[DEBUG] Handling chat for user: {user_id}, message: {user_input}")
+
+# # #         if not user_input:
+# # #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# # #         # Get or create conversation chain for the user
+# # #         if user_id not in user_conversations:
+# # #             conversation_chain = ConversationChain(
+# # #                 llm=llm_chatgpt,
+# # #                 prompt=prompt_chatgpt,
+# # #                 input_key="user_input",
+# # #                 memory=ConversationBufferMemory()
+# # #             )
+# # #             user_conversations[user_id] = conversation_chain
+# # #         else:
+# # #             conversation_chain = user_conversations[user_id]
+
+# # #         # Check if user is confirming schema
+# # #         if user_id in user_schemas and user_id not in user_confirmations:
+# # #             # Process user confirmation
+# # #             assistant_response = self.process_schema_confirmation(user_input, user_id)
+# # #             return Response({"response": assistant_response, "show_generate_notebook": True})
+
+# # #         # Generate assistant response
+# # #         assistant_response = conversation_chain.run(user_input=user_input)
+# # #         print(f"[DEBUG] Assistant response: {assistant_response}")  # Debugging statement
+
+# # #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# # #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# # #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# # #             print(f"[DEBUG] GENERATE_NOTEBOOK_PROMPT detected for user: {user_id}")
+# # #             return Response({
+# # #                 "response": assistant_response,
+# # #                 "show_generate_notebook": True
+# # #             })
+
+# # #         return Response({
+# # #             "response": assistant_response
+# # #         })
+
+# # #     def process_schema_confirmation(self, user_input, user_id):
+# # #         """
+# # #         Processes user confirmation or adjustment of the schema.
+# # #         """
+# # #         uploaded_file_info = user_schemas[user_id][0]
+# # #         suggestions = uploaded_file_info['suggestions']
+
+# # #         # Assume user confirms or provides adjustments
+# # #         if 'yes' in user_input.lower():
+# # #             user_confirmations[user_id] = suggestions
+# # #             # Provide confirmed details and prompt to generate notebook
+# # #             assistant_response = self.format_confirmation_message(suggestions)
+# # #             return assistant_response
+# # #         else:
+# # #             # Parse user adjustments
+# # #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# # #             if adjusted_columns:
+# # #                 user_confirmations[user_id] = adjusted_columns
+# # #                 # Provide confirmed details and prompt to generate notebook
+# # #                 assistant_response = self.format_confirmation_message(adjusted_columns)
+# # #                 return assistant_response
+# # #             else:
+# # #                 return "I couldn't find those columns in the dataset. Please specify valid column names for the Entity ID and Target columns."
+
+# # #     def format_confirmation_message(self, confirmation):
+# # #         """
+# # #         Formats the confirmation message with confirmed details and includes 'GENERATE_NOTEBOOK_PROMPT'.
+# # #         """
+# # #         entity_id_column = confirmation['entity_id_column']
+# # #         target_column = confirmation['target_column']
+# # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # #         confirmation_text = (
+# # #             f"Great! You've confirmed the following details:\n\n"
+# # #             f"Entity ID Column: {entity_id_column}\n"
+# # #             f"Target Column: {target_column}\n"
+# # #             f"Feature Columns: {', '.join(feature_columns)}\n\n"
+# # #             "You can now generate the notebook to proceed with your analysis."
+# # #             "\n\nGENERATE_NOTEBOOK_PROMPT"
+# # #         )
+# # #         return confirmation_text
+
+# # #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# # #         """
+# # #         Parses user input for schema adjustments.
+# # #         """
+# # #         import re
+
+# # #         # Normalize the input
+# # #         user_input = user_input.lower()
+
+# # #         # Patterns to match possible ways the user might specify the columns
+# # #         entity_id_patterns = [
+# # #             r"entity\s*[:\-]?\s*(\w+)",
+# # #             r"entity id\s*[:\-]?\s*(\w+)",
+# # #             r"entity_id\s*[:\-]?\s*(\w+)",
+# # #             r"entity column\s*[:\-]?\s*(\w+)",
+# # #             r"entityid\s*[:\-]?\s*(\w+)",
+# # #             r"id\s*[:\-]?\s*(\w+)"
+# # #         ]
+
+# # #         target_column_patterns = [
+# # #             r"target\s*[:\-]?\s*(\w+)",
+# # #             r"target column\s*[:\-]?\s*(\w+)",
+# # #             r"predict\s*[:\-]?\s*(\w+)",
+# # #             r"prediction\s*[:\-]?\s*(\w+)",
+# # #             r"target is\s+(\w+)"
+# # #         ]
+
+# # #         entity_id_column = None
+# # #         target_column = None
+
+# # #         for pattern in entity_id_patterns:
+# # #             match = re.search(pattern, user_input)
+# # #             if match:
+# # #                 entity_id_column = match.group(1)
+# # #                 break
+
+# # #         for pattern in target_column_patterns:
+# # #             match = re.search(pattern, user_input)
+# # #             if match:
+# # #                 target_column = match.group(1)
+# # #                 break
+
+# # #         # Fallback to suggestions if not found
+# # #         suggestions = uploaded_file_info['suggestions']
+# # #         if not entity_id_column:
+# # #             entity_id_column = suggestions['entity_id_column']
+# # #         if not target_column:
+# # #             target_column = suggestions['target_column']
+
+# # #         # Check if the columns exist in the schema
+# # #         schema_columns = [col['column_name'] for col in uploaded_file_info['schema']]
+# # #         if entity_id_column not in schema_columns or target_column not in schema_columns:
+# # #             return None
+
+# # #         # Prepare feature columns
+# # #         feature_columns = [col for col in schema_columns if col not in [entity_id_column, target_column]]
+
+# # #         return {
+# # #             'entity_id_column': entity_id_column,
+# # #             'target_column': target_column,
+# # #             'feature_columns': [{'column_name': col} for col in feature_columns]
+# # #         }
+
+# # #     def reset_conversation(self, request):
+# # #         user_id = request.data.get("user_id", "default_user")
+# # #         # Remove user's conversation chain
+# # #         if user_id in user_conversations:
+# # #             del user_conversations[user_id]
+# # #         # Remove user's uploaded schema and confirmations
+# # #         if user_id in user_schemas:
+# # #             del user_schemas[user_id]
+# # #         if user_id in user_confirmations:
+# # #             del user_confirmations[user_id]
+# # #         if user_id in user_notebook_flags:
+# # #             del user_notebook_flags[user_id]
+# # #         if user_id in user_notebooks:
+# # #             del user_notebooks[user_id]
+# # #         print(f"[DEBUG] Conversation reset for user: {user_id}")  # Debugging statement
+# # #         return Response({"message": "Conversation reset successful."})
+
+# # #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# # #         """
+# # #         Formats the schema information to be appended as an assistant message in the chat.
+# # #         """
+# # #         schema = uploaded_file['schema']
+# # #         target_column = uploaded_file['suggestions']['target_column']
+# # #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# # #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# # #         schema_text = (
+# # #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# # #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# # #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# # #             f"Suggested Target Column: {target_column or 'None'}\n"
+# # #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# # #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# # #             "Please confirm:\n"
+# # #             "- Is the Target Column correct?\n"
+# # #             "- Is the Entity ID Column correct?\n"
+# # #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# # #         )
+# # #         return schema_text
+
+# # #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# # #         """
+# # #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# # #         """
+# # #         glue = get_glue_client()
+# # #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# # #         storage_descriptor = {
+# # #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# # #             'Location': s3_location,
+# # #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# # #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# # #             'SerdeInfo': {
+# # #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# # #                 'Parameters': {
+# # #                     'field.delim': ',',
+# # #                     'skip.header.line.count': '1'
+# # #                 }
+# # #             }
+# # #         }
+# # #         try:
+# # #             glue.update_table(
+# # #                 DatabaseName=ATHENA_SCHEMA_NAME,
+# # #                 TableInput={
+# # #                     'Name': table_name,
+# # #                     'StorageDescriptor': storage_descriptor,
+# # #                     'TableType': 'EXTERNAL_TABLE'
+# # #                 }
+# # #             )
+# # #             print(f"[DEBUG] Glue table '{table_name}' updated successfully.")  # Debugging statement
+# # #         except glue.exceptions.EntityNotFoundException:
+# # #             print(f"[DEBUG] Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# # #             glue.create_table(
+# # #                 DatabaseName=ATHENA_SCHEMA_NAME,
+# # #                 TableInput={
+# # #                     'Name': table_name,
+# # #                     'StorageDescriptor': storage_descriptor,
+# # #                     'TableType': 'EXTERNAL_TABLE'
+# # #                 }
+# # #             )
+# # #             print(f"[DEBUG] Glue table '{table_name}' created successfully.")  # Debugging statement
+# # #         except Exception as e:
+# # #             print(f"[ERROR] Glue operation failed: {str(e)}")  # Debugging statement
+
+# # #     def generate_notebook(self, request):
+# # #         """
+# # #         Generates notebooks with pre-filled SQL queries and executed results.
+# # #         """
+# # #         user_id = request.data.get("user_id", "default_user")
+# # #         print(f"[DEBUG] Generating notebook for user: {user_id}")
+
+# # #         if user_id not in user_confirmations:
+# # #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # #         confirmation = user_confirmations[user_id]
+# # #         entity_id_column = confirmation['entity_id_column']
+# # #         target_column = confirmation['target_column']
+# # #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# # #         # Get the table name from the uploaded file info
+# # #         if user_id in user_schemas:
+# # #             uploaded_file_info = user_schemas[user_id][0]
+# # #             table_name = os.path.splitext(uploaded_file_info['name'])[0].lower().replace(' ', '_')
+# # #         else:
+# # #             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+# # #         # Create notebooks with SQL queries and executed results
+# # #         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name)
+# # #         notebook_features = self.create_features_notebook(feature_columns, table_name)
+
+# # #         # Store notebooks in user_notebooks dictionary
+# # #         import nbformat
+# # #         user_notebooks[user_id] = {
+# # #             'entity_target_notebook': nbformat.writes(notebook_entity_target),
+# # #             'features_notebook': nbformat.writes(notebook_features)
+# # #         }
+
+# # #         print("[DEBUG] Notebooks generated and stored successfully.")  # Debugging statement
+
+# # #         return Response({
+# # #             "message": "Notebooks generated successfully.",
+# # #             "notebooks": user_notebooks[user_id]
+# # #         }, status=status.HTTP_200_OK)
+
+# # #     def create_entity_target_notebook(self, entity_id_column, target_column, table_name):
+# # #         """
+# # #         Creates a notebook for Entity ID and Target analysis with SQL queries and executed results.
+# # #         """
+# # #         import nbformat
+# # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+
+# # #         nb = new_notebook()
+# # #         cells = []
+
+# # #         # Introduction cell
+# # #         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+# # #         # SQL query cell
+# # #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM {table_name} LIMIT 100;"
+
+# # #         # Execute the query and get results
+# # #         df_result = execute_sql_query(sql_query_entity_target)
+# # #         result_json = df_result.to_dict(orient='records') if not df_result.empty else []
+
+# # #         # Add the SQL query to the cell
+# # #         code_cell = new_code_cell(sql_query_entity_target)
+
+# # #         # Attach the result to the code cell's outputs
+# # #         code_cell.outputs = [
+# # #             {
+# # #                 'output_type': 'execute_result',
+# # #                 'execution_count': None,
+# # #                 'data': {
+# # #                     'application/json': result_json
+# # #                 },
+# # #                 'metadata': {}
+# # #             }
+# # #         ]
+
+# # #         cells.append(code_cell)
+
+# # #         nb['cells'] = cells
+
+# # #         return nb
+
+# # #     def create_features_notebook(self, feature_columns, table_name):
+# # #         """
+# # #         Creates a notebook for Features analysis with SQL queries and executed results.
+# # #         """
+# # #         import nbformat
+# # #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+
+# # #         nb = new_notebook()
+# # #         cells = []
+
+# # #         # Introduction cell
+# # #         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+# # #         # Feature columns analysis
+# # #         for feature in feature_columns:
+# # #             # Add a markdown cell for each feature
+# # #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+
+# # #             # SQL query cell
+# # #             sql_query_feature = f"SELECT {feature}, COUNT(*) as count FROM {table_name} GROUP BY {feature} ORDER BY count DESC LIMIT 100;"
+
+# # #             # Execute the query and get results
+# # #             df_result = execute_sql_query(sql_query_feature)
+# # #             result_json = df_result.to_dict(orient='records') if not df_result.empty else []
+
+# # #             # Add the SQL query to the cell
+# # #             code_cell = new_code_cell(sql_query_feature)
+
+# # #             # Attach the result to the code cell's outputs
+# # #             code_cell.outputs = [
+# # #                 {
+# # #                     'output_type': 'execute_result',
+# # #                     'execution_count': None,
+# # #                     'data': {
+# # #                         'application/json': result_json
+# # #                     },
+# # #                     'metadata': {}
+# # #                 }
+# # #             ]
+
+# # #             cells.append(code_cell)
+
+# # #         nb['cells'] = cells
+
+# # #         return nb
+
+
+
+# # # chat/views.py
+
+# # import os
+# # import datetime
+# # from io import BytesIO
+# # from typing import Any, Dict, List
+# # import boto3
+# # import pandas as pd
+# # import openai
+# # import json
+# # from botocore.exceptions import ClientError, NoCredentialsError
+# # from django.conf import settings
+# # from rest_framework import status
+# # from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# # from rest_framework.response import Response
+# # from rest_framework.views import APIView
+# # from langchain.chains import ConversationChain
+# # from langchain.chat_models import ChatOpenAI
+# # from langchain.prompts import PromptTemplate
+# # from langchain.memory import ConversationBufferMemory
+# # from langchain.schema import AIMessage
+# # from .models import FileSchema, UploadedFile
+# # from .serializers import UploadedFileSerializer
+
+# # # ===========================
+# # # AWS Configuration
+# # # ===========================
+# # AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# # AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# # AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# # AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# # AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # e.g., 's3://your-athena-query-results-bucket/'
+# # AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # # Set the Athena database (schema) name
+# # ATHENA_SCHEMA_NAME = 'pa_user_datafiles_db'  # Replace with your actual Athena database name
+
+# # # ===========================
+# # # OpenAI Configuration
+# # # ===========================
+# # OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# # openai.api_key = OPENAI_API_KEY
+
+# # # ===========================
+# # # Initialize OpenAI LangChain model for ChatGPT
+# # # ===========================
+# # llm_chatgpt = ChatOpenAI(
+# #     model="gpt-3.5-turbo-16k",
+# #     temperature=0.7,
+# #     openai_api_key=OPENAI_API_KEY,
+# # )
+
+# # # Global dictionaries to store user-specific data
+# # user_conversations = {}
+# # user_schemas = {}
+# # user_confirmations = {}
+# # user_notebook_flags = {}
+# # user_notebooks = {}  # Stores generated notebooks for each user
+
+# # # Modify the prompt in the existing code
+# # prompt_chatgpt = PromptTemplate(
+# #     input_variables=["history", "user_input"],
+# #     template=(
+# #         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+# #         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+# #         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+# #         "Steps:\n"
+# #         "1. Discuss the Subject they want to predict.\n"
+# #         "2. Confirm the Target Value they want to predict.\n"
+# #         "3. Check if there's a specific time frame for the prediction.\n"
+# #         "4. Reference the dataset schema if available.\n"
+# #         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+# #         "Conversation history: {history}\n"
+# #         "User input: {user_input}\n"
+# #         "Assistant:"
+# #     ),
+# # )
+
+# # # ===========================
+# # # Utility Functions
+# # # ===========================
+
+# # def get_s3_client():
+# #     """
+# #     Creates and returns an AWS S3 client.
+# #     """
+# #     return boto3.client(
+# #         's3',
+# #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# #         region_name=AWS_S3_REGION_NAME
+# #     )
+
+# # def get_glue_client():
+# #     """
+# #     Creates and returns an AWS Glue client.
+# #     """
+# #     return boto3.client(
+# #         'glue',
+# #         aws_access_key_id=AWS_ACCESS_KEY_ID,
+# #         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# #         region_name=AWS_S3_REGION_NAME
+# #     )
+
+# # def infer_column_dtype(series: pd.Series) -> str:
+# #     """
+# #     Infers the correct data type for a column by handling mixed types.
+# #     """
+# #     series = series.dropna().astype(str).str.strip()
+
+# #     # Try datetime
+# #     try:
+# #         pd.to_datetime(series, errors='raise')
+# #         return "timestamp"
+# #     except ValueError:
+# #         pass
+
+# #     # Try boolean
+# #     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+# #     unique_values = set(series.str.lower().unique())
+# #     if unique_values.issubset(boolean_values):
+# #         return "boolean"
+
+# #     # Try integer
+# #     try:
+# #         int_series = pd.to_numeric(series, errors='raise')
+# #         if (int_series % 1 == 0).all():
+# #             int_min = int_series.min()
+# #             int_max = int_series.max()
+# #             if int_min >= -2147483648 and int_max <= 2147483647:
+# #                 return "int"
+# #             else:
+# #                 return "bigint"
+# #     except ValueError:
+# #         pass
+
+# #     # Try double
+# #     try:
+# #         pd.to_numeric(series, errors='raise', downcast='float')
+# #         return "double"
+# #     except ValueError:
+# #         pass
+
+# #     # Default to string
+# #     return "string"
+
+# # def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+# #     """
+# #     Suggests a target column based on user input or predictive question.
+# #     """
+# #     # Use the last column as a default suggestion
+# #     return df.columns[-1]
+
+# # def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+# #     """
+# #     Suggests an entity ID column based on uniqueness and naming conventions.
+# #     """
+# #     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+# #     for col in likely_id_columns:
+# #         if df[col].nunique() / len(df) > 0.95:
+# #             return col
+
+# #     # Fallback: Find any column with >95% unique values
+# #     for col in df.columns:
+# #         if df[col].nunique() / len(df) > 0.95:
+# #             return col
+# #     return None
+
+# # def execute_sql_query(query: str) -> pd.DataFrame:
+# #     """
+# #     Executes a SQL query using AWS Athena and returns the results as a Pandas DataFrame.
+# #     """
+# #     from pyathena import connect
+# #     try:
+# #         conn = connect(
+# #             aws_access_key_id=AWS_ACCESS_KEY_ID,
+# #             aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+# #             s3_staging_dir=AWS_ATHENA_S3_STAGING_DIR,
+# #             region_name=AWS_REGION_NAME,
+# #             schema_name=ATHENA_SCHEMA_NAME  # Specify the Athena database (schema)
+# #         )
+# #         df = pd.read_sql(query, conn)
+# #         print(f"[DEBUG] Query executed successfully: {query}")
+# #         return df
+# #     except Exception as e:
+# #         print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
+# #         return pd.DataFrame()  # Return an empty DataFrame on error
+
+# # # ===========================
+# # # Unified ChatGPT API
+# # # ===========================
+# # class UnifiedChatGPTAPI(APIView):
+# #     """
+# #     Unified API for handling ChatGPT-based chat interactions and file uploads.
+# #     Endpoint: /api/chatgpt/
+# #     """
+# #     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+# #     def post(self, request):
+# #         """
+# #         Handles POST requests for chat messages and file uploads.
+# #         Differentiates based on the presence of files in the request.
+# #         """
+# #         action = request.data.get('action', '')
+# #         if action == 'reset':
+# #             return self.reset_conversation(request)
+# #         if action == 'generate_notebook':
+# #             return self.generate_notebook(request)
+# #         if "file" in request.FILES:
+# #             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+# #         # Else, handle chat message
+# #         return self.handle_chat(request)
+
+# #     def handle_file_upload(self, request, files: List[Any]):
+# #         """
+# #         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+# #         After processing, appends schema details to the chat messages.
+# #         """
+# #         files = request.FILES.getlist("file")
+# #         if not files:
+# #             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+# #         user_id = request.data.get("user_id", "default_user")
+# #         print(f"[DEBUG] Handling file upload for user: {user_id}")
+
+# #         try:
+# #             uploaded_files_info = []
+# #             s3 = get_s3_client()
+# #             glue = get_glue_client()
+
+# #             for file in files:
+# #                 print(f"[DEBUG] Processing file: {file.name}")
+# #                 # Validate file format
+# #                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+# #                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+# #                 # Read file into Pandas DataFrame
+# #                 if file.name.lower().endswith('.csv'):
+# #                     df = pd.read_csv(file)
+# #                 else:
+# #                     df = pd.read_excel(file)
+
+# #                 # Normalize column headers
+# #                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+# #                 print(f"[DEBUG] DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+# #                 # Infer schema with precision
+# #                 schema = [
+# #                     {
+# #                         "column_name": col,
+# #                         "data_type": infer_column_dtype(df[col])
+# #                     }
+# #                     for col in df.columns
+# #                 ]
+# #                 print(f"[DEBUG] Inferred schema: {schema}")  # Debugging statement
+
+# #                 # Convert Boolean Columns to 'true'/'false' Strings
+# #                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+# #                 for col in boolean_columns:
+# #                     df[col] = df[col].astype(str).str.strip().str.lower()
+# #                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+# #                 print(f"[DEBUG] Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+# #                 # Handle Duplicate Files Dynamically
+# #                 file_name_base, file_extension = os.path.splitext(file.name)
+# #                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+# #                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+# #                 if existing_file:
+# #                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+# #                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+# #                     file.name = new_file_name
+# #                     print(f"[DEBUG] Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+# #                 else:
+# #                     print(f"[DEBUG] File name is unique: {file.name}")  # Debugging statement
+
+# #                 # Save Metadata to Database
+# #                 file.seek(0)
+# #                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+# #                 if file_serializer.is_valid():
+# #                     file_instance = file_serializer.save()
+
+# #                     # Convert DataFrame to CSV and Upload to S3
+# #                     csv_buffer = BytesIO()
+# #                     df.to_csv(csv_buffer, index=False)
+# #                     csv_buffer.seek(0)
+# #                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+# #                     file_key = f"uploads/{s3_file_name}"
+
+# #                     # Upload to AWS S3
+# #                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+# #                     print(f"[DEBUG] File uploaded to S3: {file_key}")  # Debugging statement
+
+# #                     # Generate file URL
+# #                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+# #                     file_instance.file_url = file_url
+# #                     file_instance.save()
+
+# #                     # Save Schema to Database
+# #                     FileSchema.objects.create(file=file_instance, schema=schema)
+# #                     print(f"[DEBUG] Schema saved to database for file: {file.name}")  # Debugging statement
+
+# #                     # Trigger AWS Glue Table Update
+# #                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+# #                     # Append file info to response
+# #                     uploaded_files_info.append({
+# #                         'id': file_instance.id,
+# #                         'name': file_instance.name,
+# #                         'file_url': file_instance.file_url,
+# #                         'schema': schema,
+# #                         'suggestions': {
+# #                             'target_column': suggest_target_column(df, []),
+# #                             'entity_id_column': suggest_entity_id_column(df),
+# #                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, [])]]
+# #                         }
+# #                     })
+
+# #                 else:
+# #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# #             # Store schema for user
+# #             user_schemas[user_id] = uploaded_files_info
+# #             print(f"[DEBUG] Stored schema for user: {user_id}")
+
+# #             # Initiate schema discussion with the user
+# #             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+# #             print(f"[DEBUG] Schema discussion message: {schema_discussion}")  # Debugging statement
+
+# #             # Create or get user's conversation chain
+# #             if user_id not in user_conversations:
+# #                 conversation_chain = ConversationChain(
+# #                     llm=llm_chatgpt,
+# #                     prompt=prompt_chatgpt,
+# #                     input_key="user_input",
+# #                     memory=ConversationBufferMemory()
+# #                 )
+# #                 user_conversations[user_id] = conversation_chain
+# #             else:
+# #                 conversation_chain = user_conversations[user_id]
+
+# #             # Add the schema discussion to the assistant's messages
+# #             conversation_chain.memory.chat_memory.messages.append(
+# #                 AIMessage(content=schema_discussion)
+# #             )
+
+# #             return Response({
+# #                 "message": "Files uploaded and processed successfully.",
+# #                 "uploaded_files": uploaded_files_info,
+# #                 "chat_message": schema_discussion
+# #             }, status=status.HTTP_201_CREATED)
+
+# #         except pd.errors.EmptyDataError:
+# #             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+# #         except NoCredentialsError:
+# #             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+# #         except ClientError as e:
+# #             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# #         except Exception as e:
+# #             print(f"[ERROR] Unexpected error during file upload: {str(e)}")  # Debugging statement
+# #             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+# #     def handle_chat(self, request):
+# #         user_input = request.data.get("message", "").strip()
+# #         user_id = request.data.get("user_id", "default_user")
+# #         print(f"[DEBUG] Handling chat for user: {user_id}, message: {user_input}")
+
+# #         if not user_input:
+# #             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+# #         # Get or create conversation chain for the user
+# #         if user_id not in user_conversations:
+# #             conversation_chain = ConversationChain(
+# #                 llm=llm_chatgpt,
+# #                 prompt=prompt_chatgpt,
+# #                 input_key="user_input",
+# #                 memory=ConversationBufferMemory()
+# #             )
+# #             user_conversations[user_id] = conversation_chain
+# #         else:
+# #             conversation_chain = user_conversations[user_id]
+
+# #         # Check if user is confirming schema
+# #         if user_id in user_schemas and user_id not in user_confirmations:
+# #             # Process user confirmation
+# #             assistant_response = self.process_schema_confirmation(user_input, user_id)
+# #             return Response({"response": assistant_response, "show_generate_notebook": True})
+
+# #         # Generate assistant response
+# #         assistant_response = conversation_chain.run(user_input=user_input)
+# #         print(f"[DEBUG] Assistant response: {assistant_response}")  # Debugging statement
+
+# #         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+# #         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+# #             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+# #             print(f"[DEBUG] GENERATE_NOTEBOOK_PROMPT detected for user: {user_id}")
+# #             return Response({
+# #                 "response": assistant_response,
+# #                 "show_generate_notebook": True
+# #             })
+
+# #         return Response({
+# #             "response": assistant_response
+# #         })
+
+# #     def process_schema_confirmation(self, user_input, user_id):
+# #         """
+# #         Processes user confirmation or adjustment of the schema.
+# #         """
+# #         uploaded_file_info = user_schemas[user_id][0]
+# #         suggestions = uploaded_file_info['suggestions']
+
+# #         # Assume user confirms or provides adjustments
+# #         if 'yes' in user_input.lower():
+# #             user_confirmations[user_id] = suggestions
+# #             # Provide confirmed details and prompt to generate notebook
+# #             assistant_response = self.format_confirmation_message(suggestions)
+# #             return assistant_response
+# #         else:
+# #             # Parse user adjustments
+# #             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+# #             if adjusted_columns:
+# #                 user_confirmations[user_id] = adjusted_columns
+# #                 # Provide confirmed details and prompt to generate notebook
+# #                 assistant_response = self.format_confirmation_message(adjusted_columns)
+# #                 return assistant_response
+# #             else:
+# #                 return "I couldn't find those columns in the dataset. Please specify valid column names for the Entity ID and Target columns."
+
+# #     def format_confirmation_message(self, confirmation):
+# #         """
+# #         Formats the confirmation message with confirmed details and includes 'GENERATE_NOTEBOOK_PROMPT'.
+# #         """
+# #         entity_id_column = confirmation['entity_id_column']
+# #         target_column = confirmation['target_column']
+# #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# #         confirmation_text = (
+# #             f"Great! You've confirmed the following details:\n\n"
+# #             f"Entity ID Column: {entity_id_column}\n"
+# #             f"Target Column: {target_column}\n"
+# #             f"Feature Columns: {', '.join(feature_columns)}\n\n"
+# #             "You can now generate the notebook to proceed with your analysis."
+# #             "\n\nGENERATE_NOTEBOOK_PROMPT"
+# #         )
+# #         return confirmation_text
+
+# #     def parse_user_adjustments(self, user_input, uploaded_file_info):
+# #         """
+# #         Parses user input for schema adjustments.
+# #         """
+# #         import re
+
+# #         # Normalize the input
+# #         user_input = user_input.lower()
+
+# #         # Patterns to match possible ways the user might specify the columns
+# #         entity_id_patterns = [
+# #             r"entity\s*[:\-]?\s*(\w+)",
+# #             r"entity id\s*[:\-]?\s*(\w+)",
+# #             r"entity_id\s*[:\-]?\s*(\w+)",
+# #             r"entity column\s*[:\-]?\s*(\w+)",
+# #             r"entityid\s*[:\-]?\s*(\w+)",
+# #             r"id\s*[:\-]?\s*(\w+)"
+# #         ]
+
+# #         target_column_patterns = [
+# #             r"target\s*[:\-]?\s*(\w+)",
+# #             r"target column\s*[:\-]?\s*(\w+)",
+# #             r"predict\s*[:\-]?\s*(\w+)",
+# #             r"prediction\s*[:\-]?\s*(\w+)",
+# #             r"target is\s+(\w+)"
+# #         ]
+
+# #         entity_id_column = None
+# #         target_column = None
+
+# #         for pattern in entity_id_patterns:
+# #             match = re.search(pattern, user_input)
+# #             if match:
+# #                 entity_id_column = match.group(1)
+# #                 break
+
+# #         for pattern in target_column_patterns:
+# #             match = re.search(pattern, user_input)
+# #             if match:
+# #                 target_column = match.group(1)
+# #                 break
+
+# #         # Fallback to suggestions if not found
+# #         suggestions = uploaded_file_info['suggestions']
+# #         if not entity_id_column:
+# #             entity_id_column = suggestions['entity_id_column']
+# #         if not target_column:
+# #             target_column = suggestions['target_column']
+
+# #         # Check if the columns exist in the schema
+# #         schema_columns = [col['column_name'] for col in uploaded_file_info['schema']]
+# #         if entity_id_column not in schema_columns or target_column not in schema_columns:
+# #             return None
+
+# #         # Prepare feature columns
+# #         feature_columns = [col for col in schema_columns if col not in [entity_id_column, target_column]]
+
+# #         return {
+# #             'entity_id_column': entity_id_column,
+# #             'target_column': target_column,
+# #             'feature_columns': [{'column_name': col} for col in feature_columns]
+# #         }
+
+# #     def reset_conversation(self, request):
+# #         user_id = request.data.get("user_id", "default_user")
+# #         # Remove user's conversation chain
+# #         if user_id in user_conversations:
+# #             del user_conversations[user_id]
+# #         # Remove user's uploaded schema and confirmations
+# #         if user_id in user_schemas:
+# #             del user_schemas[user_id]
+# #         if user_id in user_confirmations:
+# #             del user_confirmations[user_id]
+# #         if user_id in user_notebook_flags:
+# #             del user_notebook_flags[user_id]
+# #         if user_id in user_notebooks:
+# #             del user_notebooks[user_id]
+# #         print(f"[DEBUG] Conversation reset for user: {user_id}")  # Debugging statement
+# #         return Response({"message": "Conversation reset successful."})
+
+# #     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+# #         """
+# #         Formats the schema information to be appended as an assistant message in the chat.
+# #         """
+# #         schema = uploaded_file['schema']
+# #         target_column = uploaded_file['suggestions']['target_column']
+# #         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+# #         feature_columns = uploaded_file['suggestions']['feature_columns']
+# #         schema_text = (
+# #             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+# #             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+# #             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+# #             f"Suggested Target Column: {target_column or 'None'}\n"
+# #             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+# #             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+# #             "Please confirm:\n"
+# #             "- Is the Target Column correct?\n"
+# #             "- Is the Entity ID Column correct?\n"
+# #             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+# #         )
+# #         return schema_text
+
+# #     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+# #         """
+# #         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+# #         """
+# #         glue = get_glue_client()
+# #         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+# #         storage_descriptor = {
+# #             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+# #             'Location': s3_location,
+# #             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+# #             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+# #             'SerdeInfo': {
+# #                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+# #                 'Parameters': {
+# #                     'field.delim': ',',
+# #                     'skip.header.line.count': '1'
+# #                 }
+# #             }
+# #         }
+# #         try:
+# #             glue.update_table(
+# #                 DatabaseName=ATHENA_SCHEMA_NAME,
+# #                 TableInput={
+# #                     'Name': table_name,
+# #                     'StorageDescriptor': storage_descriptor,
+# #                     'TableType': 'EXTERNAL_TABLE'
+# #                 }
+# #             )
+# #             print(f"[DEBUG] Glue table '{table_name}' updated successfully.")  # Debugging statement
+# #         except glue.exceptions.EntityNotFoundException:
+# #             print(f"[DEBUG] Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+# #             glue.create_table(
+# #                 DatabaseName=ATHENA_SCHEMA_NAME,
+# #                 TableInput={
+# #                     'Name': table_name,
+# #                     'StorageDescriptor': storage_descriptor,
+# #                     'TableType': 'EXTERNAL_TABLE'
+# #                 }
+# #             )
+# #             print(f"[DEBUG] Glue table '{table_name}' created successfully.")  # Debugging statement
+# #         except Exception as e:
+# #             print(f"[ERROR] Glue operation failed: {str(e)}")  # Debugging statement
+
+# #     def generate_notebook(self, request):
+# #         """
+# #         Generates notebooks with pre-filled SQL queries and executed results.
+# #         """
+# #         user_id = request.data.get("user_id", "default_user")
+# #         print(f"[DEBUG] Generating notebook for user: {user_id}")
+
+# #         if user_id not in user_confirmations:
+# #             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+# #         confirmation = user_confirmations[user_id]
+# #         entity_id_column = confirmation['entity_id_column']
+# #         target_column = confirmation['target_column']
+# #         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+# #         # Get the table name from the uploaded file info
+# #         if user_id in user_schemas:
+# #             uploaded_file_info = user_schemas[user_id][0]
+# #             table_name = os.path.splitext(uploaded_file_info['name'])[0].lower().replace(' ', '_')
+# #         else:
+# #             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+# #         # Create notebooks with SQL queries and executed results
+# #         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name)
+# #         notebook_features = self.create_features_notebook(feature_columns, table_name)
+
+# #         # Store notebooks in user_notebooks dictionary
+# #         import nbformat
+# #         user_notebooks[user_id] = {
+# #             'entity_target_notebook': nbformat.writes(notebook_entity_target),
+# #             'features_notebook': nbformat.writes(notebook_features)
+# #         }
+
+# #         print("[DEBUG] Notebooks generated and stored successfully.")  # Debugging statement
+
+# #         return Response({
+# #             "message": "Notebooks generated successfully.",
+# #             "notebooks": user_notebooks[user_id]
+# #         }, status=status.HTTP_200_OK)
+
+# #     def create_entity_target_notebook(self, entity_id_column, target_column, table_name):
+# #         """
+# #         Creates a notebook for Entity ID and Target analysis with SQL queries and executed results.
+# #         """
+# #         import nbformat
+# #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+
+# #         nb = new_notebook()
+# #         cells = []
+
+# #         # Introduction cell
+# #         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+# #         # SQL query cell
+# #         sql_query_entity_target = f"SELECT {entity_id_column}, {target_column} FROM {table_name} LIMIT 100;"
+
+# #         # Execute the query and get results
+# #         df_result = execute_sql_query(sql_query_entity_target)
+# #         result_json = df_result.to_dict(orient='records') if not df_result.empty else []
+
+# #         # Add the SQL query to the cell
+# #         code_cell = new_code_cell(sql_query_entity_target)
+
+# #         # Attach the result to the code cell's outputs using new_output
+# #         code_cell.outputs = [
+# #             new_output(
+# #                 output_type='execute_result',
+# #                 data={
+# #                     'application/json': result_json
+# #                 },
+# #                 metadata={}
+# #             )
+# #         ]
+
+# #         cells.append(code_cell)
+
+# #         nb['cells'] = cells
+
+# #         return nb
+
+# #     def create_features_notebook(self, feature_columns, table_name):
+# #         """
+# #         Creates a notebook for Features analysis with SQL queries and executed results.
+# #         """
+# #         import nbformat
+# #         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+
+# #         nb = new_notebook()
+# #         cells = []
+
+# #         # Introduction cell
+# #         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+# #         # Feature columns analysis
+# #         for feature in feature_columns:
+# #             # Add a markdown cell for each feature
+# #             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+
+# #             # SQL query cell
+# #             sql_query_feature = f"SELECT {feature}, COUNT(*) as count FROM {table_name} GROUP BY {feature} ORDER BY count DESC LIMIT 100;"
+
+# #             # Execute the query and get results
+# #             df_result = execute_sql_query(sql_query_feature)
+# #             result_json = df_result.to_dict(orient='records') if not df_result.empty else []
+
+# #             # Add the SQL query to the cell
+# #             code_cell = new_code_cell(sql_query_feature)
+
+# #             # Attach the result to the code cell's outputs using new_output
+# #             code_cell.outputs = [
+# #                 new_output(
+# #                     output_type='execute_result',
+# #                     data={
+# #                         'application/json': result_json
+# #                     },
+# #                     metadata={}
+# #                 )
+# #             ]
+
+# #             cells.append(code_cell)
+
+# #         nb['cells'] = cells
+
+# #         return nb
+
+
+
+
+# # chat/views.py
+
+# import os
+# import datetime
+# from io import BytesIO
+# from typing import Any, Dict, List
+# import boto3
+# import pandas as pd
+# import openai
+# import json
+# from botocore.exceptions import ClientError, NoCredentialsError
+# from django.conf import settings
+# from rest_framework import status
+# from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
+# from rest_framework.response import Response
+# from rest_framework.views import APIView
+# from langchain.chains import ConversationChain
+# from langchain.chat_models import ChatOpenAI
+# from langchain.prompts import PromptTemplate
+# from langchain.memory import ConversationBufferMemory
+# from langchain.schema import AIMessage
+# from sqlalchemy.engine import create_engine
+# from .models import FileSchema, UploadedFile
+# from .serializers import UploadedFileSerializer
+# import re
+# import nbformat
+# from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+# import numpy as np
+
+# # ===========================
+# # AWS Configuration
+# # ===========================
+# AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
+# AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # Ensure it's set in settings.py
+# AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# # Set the Athena database (schema) name
+# ATHENA_SCHEMA_NAME = 'pa_user_datafiles_db'  # Replace with your actual Athena database name
+
+# # ===========================
+# # OpenAI Configuration
+# # ===========================
+# OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# openai.api_key = OPENAI_API_KEY
+
+# # ===========================
+# # Initialize OpenAI LangChain model for ChatGPT
+# # ===========================
+# llm_chatgpt = ChatOpenAI(
+#     model="gpt-3.5-turbo-16k",
+#     temperature=0.7,
+#     openai_api_key=OPENAI_API_KEY,
+# )
+
+# # Global dictionaries to store user-specific data
+# user_conversations = {}
+# user_schemas = {}
+# user_confirmations = {}
+# user_notebook_flags = {}
+# user_notebooks = {}  # Stores generated notebooks for each user
+
+# # Modify the prompt in the existing code
+# prompt_chatgpt = PromptTemplate(
+#     input_variables=["history", "user_input"],
+#     template=(
+#         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
+#         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
+#         "Wait for the user to confirm all necessary inputs before proceeding further.\n\n"
+#         "Steps:\n"
+#         "1. Discuss the Subject they want to predict.\n"
+#         "2. Confirm the Target Value they want to predict.\n"
+#         "3. Check if there's a specific time frame for the prediction.\n"
+#         "4. Reference the dataset schema if available.\n"
+#         "5. **Once you have confirmed all necessary information with the user, provide a summary of the inputs. At the very end of your summary, include only the phrase 'GENERATE_NOTEBOOK_PROMPT', and nothing else. Do not include 'GENERATE_NOTEBOOK_PROMPT' in any of your responses until all necessary information has been gathered and confirmed with the user.**\n\n"
+#         "Conversation history: {history}\n"
+#         "User input: {user_input}\n"
+#         "Assistant:"
+#     ),
+# )
+
+# # ===========================
+# # Utility Functions
+# # ===========================
+
+# def get_s3_client():
+#     """
+#     Creates and returns an AWS S3 client.
+#     """
+#     return boto3.client(
+#         's3',
+#         aws_access_key_id=AWS_ACCESS_KEY_ID,
+#         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+#         region_name=AWS_S3_REGION_NAME
+#     )
+
+# def get_glue_client():
+#     """
+#     Creates and returns an AWS Glue client.
+#     """
+#     return boto3.client(
+#         'glue',
+#         aws_access_key_id=AWS_ACCESS_KEY_ID,
+#         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+#         region_name=AWS_S3_REGION_NAME
+#     )
+
+# def infer_column_dtype(series: pd.Series) -> str:
+#     """
+#     Infers the correct data type for a column by handling mixed types.
+#     """
+#     series = series.dropna().astype(str).str.strip()
+
+#     # Try datetime
+#     try:
+#         pd.to_datetime(series, errors='raise')
+#         return "timestamp"
+#     except ValueError:
+#         pass
+
+#     # Try boolean
+#     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
+#     unique_values = set(series.str.lower().unique())
+#     if unique_values.issubset(boolean_values):
+#         return "boolean"
+
+#     # Try integer
+#     try:
+#         int_series = pd.to_numeric(series, errors='raise')
+#         if (int_series % 1 == 0).all():
+#             int_min = int_series.min()
+#             int_max = int_series.max()
+#             if int_min >= -2147483648 and int_max <= 2147483647:
+#                 return "int"
+#             else:
+#                 return "bigint"
+#     except ValueError:
+#         pass
+
+#     # Try double
+#     try:
+#         pd.to_numeric(series, errors='raise', downcast='float')
+#         return "double"
+#     except ValueError:
+#         pass
+
+#     # Default to string
+#     return "string"
+
+# def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
+#     """
+#     Suggests a target column based on user input or predictive question.
+#     """
+#     # Use the last column as a default suggestion
+#     return df.columns[-1]
+
+# def suggest_entity_id_column(df: pd.DataFrame) -> Any:
+#     """
+#     Suggests an entity ID column based on uniqueness and naming conventions.
+#     """
+#     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
+#     for col in likely_id_columns:
+#         if df[col].nunique() / len(df) > 0.95:
+#             return col
+
+#     # Fallback: Find any column with >95% unique values
+#     for col in df.columns:
+#         if df[col].nunique() / len(df) > 0.95:
+#             return col
+#     return None
+
+# def execute_sql_query(query: str) -> pd.DataFrame:
+#     """
+#     Executes a SQL query using AWS Athena and returns the results as a Pandas DataFrame.
+#     """
+#     try:
+#         if not AWS_ATHENA_S3_STAGING_DIR:
+#             raise ValueError("AWS_ATHENA_S3_STAGING_DIR is not set. Please set it in your environment variables or settings.")
+#         print(f"[DEBUG] AWS_ATHENA_S3_STAGING_DIR: {AWS_ATHENA_S3_STAGING_DIR}")
+
+#         # Create an SQLAlchemy engine for Athena
+#         connection_string = (
+#             f"awsathena+rest://{AWS_ACCESS_KEY_ID}:{AWS_SECRET_ACCESS_KEY}@athena.{AWS_REGION_NAME}.amazonaws.com:443/"
+#             f"{ATHENA_SCHEMA_NAME}?s3_staging_dir={AWS_ATHENA_S3_STAGING_DIR}"
+#         )
+#         engine = create_engine(connection_string)
+
+#         print(f"[DEBUG] Executing query: {query}")
+#         df = pd.read_sql_query(query, engine)
+#         print(f"[DEBUG] Query executed successfully, retrieved {len(df)} rows.")
+#         return df
+#     except Exception as e:
+#         print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
+#         return pd.DataFrame()  # Return an empty DataFrame on error
+
+# # ===========================
+# # Unified ChatGPT API
+# # ===========================
+# class UnifiedChatGPTAPI(APIView):
+#     """
+#     Unified API for handling ChatGPT-based chat interactions and file uploads.
+#     Endpoint: /api/chatgpt/
+#     """
+#     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+#     def post(self, request):
+#         """
+#         Handles POST requests for chat messages and file uploads.
+#         Differentiates based on the presence of files in the request.
+#         """
+#         action = request.data.get('action', '')
+#         if action == 'reset':
+#             return self.reset_conversation(request)
+#         if action == 'generate_notebook':
+#             return self.generate_notebook(request)
+#         if "file" in request.FILES:
+#             return self.handle_file_upload(request, request.FILES.getlist("file"))
+
+#         # Else, handle chat message
+#         return self.handle_chat(request)
+
+#     def handle_file_upload(self, request, files: List[Any]):
+#         """
+#         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
+#         After processing, appends schema details to the chat messages.
+#         """
+#         files = request.FILES.getlist("file")
+#         if not files:
+#             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         user_id = request.data.get("user_id", "default_user")
+#         print(f"[DEBUG] Handling file upload for user: {user_id}")
+
+#         try:
+#             uploaded_files_info = []
+#             s3 = get_s3_client()
+#             glue = get_glue_client()
+
+#             for file in files:
+#                 print(f"[DEBUG] Processing file: {file.name}")
+#                 # Validate file format
+#                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+#                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+#                 # Read file into Pandas DataFrame
+#                 if file.name.lower().endswith('.csv'):
+#                     df = pd.read_csv(file)
+#                 else:
+#                     df = pd.read_excel(file)
+
+#                 # Normalize column headers
+#                 df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+#                 print(f"[DEBUG] DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+
+#                 # Infer schema with precision
+#                 schema = [
+#                     {
+#                         "column_name": col,
+#                         "data_type": infer_column_dtype(df[col])
+#                     }
+#                     for col in df.columns
+#                 ]
+#                 print(f"[DEBUG] Inferred schema: {schema}")  # Debugging statement
+
+#                 # Convert Boolean Columns to 'true'/'false' Strings
+#                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+#                 for col in boolean_columns:
+#                     df[col] = df[col].astype(str).str.strip().str.lower()
+#                     df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
+#                 print(f"[DEBUG] Boolean columns converted: {boolean_columns}")  # Debugging statement
+
+#                 # Handle Duplicate Files Dynamically
+#                 file_name_base, file_extension = os.path.splitext(file.name)
+#                 file_name_base = file_name_base.lower().replace(' ', '_')
+
+#                 existing_file = UploadedFile.objects.filter(name=file.name).first()
+#                 if existing_file:
+#                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+#                     new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
+#                     file.name = new_file_name
+#                     print(f"[DEBUG] Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
+#                 else:
+#                     print(f"[DEBUG] File name is unique: {file.name}")  # Debugging statement
+
+#                 # Save Metadata to Database
+#                 file.seek(0)
+#                 file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
+#                 if file_serializer.is_valid():
+#                     file_instance = file_serializer.save()
+
+#                     # Convert DataFrame to CSV and Upload to S3
+#                     csv_buffer = BytesIO()
+#                     df.to_csv(csv_buffer, index=False)
+#                     csv_buffer.seek(0)
+#                     s3_file_name = os.path.splitext(file.name)[0] + '.csv'
+#                     file_key = f"uploads/{s3_file_name}"
+
+#                     # Upload to AWS S3
+#                     s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+#                     print(f"[DEBUG] File uploaded to S3: {file_key}")  # Debugging statement
+
+#                     # Generate file URL
+#                     file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+#                     file_instance.file_url = file_url
+#                     file_instance.save()
+
+#                     # Save Schema to Database
+#                     FileSchema.objects.create(file=file_instance, schema=schema)
+#                     print(f"[DEBUG] Schema saved to database for file: {file.name}")  # Debugging statement
+
+#                     # Trigger AWS Glue Table Update
+#                     self.trigger_glue_update(file_name_base, schema, file_key)
+
+#                     # Append file info to response
+#                     uploaded_files_info.append({
+#                         'id': file_instance.id,
+#                         'name': file_instance.name,
+#                         'file_url': file_instance.file_url,
+#                         'schema': schema,
+#                         'suggestions': {
+#                             'target_column': suggest_target_column(df, []),
+#                             'entity_id_column': suggest_entity_id_column(df),
+#                             'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, [])]]
+#                         }
+#                     })
+
+#                 else:
+#                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+#             # Store schema for user
+#             user_schemas[user_id] = uploaded_files_info
+#             print(f"[DEBUG] Stored schema for user: {user_id}")
+
+#             # Initiate schema discussion with the user
+#             schema_discussion = self.format_schema_message(uploaded_files_info[0])
+#             print(f"[DEBUG] Schema discussion message: {schema_discussion}")  # Debugging statement
+
+#             # Create or get user's conversation chain
+#             if user_id not in user_conversations:
+#                 conversation_chain = ConversationChain(
+#                     llm=llm_chatgpt,
+#                     prompt=prompt_chatgpt,
+#                     input_key="user_input",
+#                     memory=ConversationBufferMemory()
+#                 )
+#                 user_conversations[user_id] = conversation_chain
+#             else:
+#                 conversation_chain = user_conversations[user_id]
+
+#             # Add the schema discussion to the assistant's messages
+#             conversation_chain.memory.chat_memory.messages.append(
+#                 AIMessage(content=schema_discussion)
+#             )
+
+#             return Response({
+#                 "message": "Files uploaded and processed successfully.",
+#                 "uploaded_files": uploaded_files_info,
+#                 "chat_message": schema_discussion
+#             }, status=status.HTTP_201_CREATED)
+
+#         except pd.errors.EmptyDataError:
+#             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
+#         except NoCredentialsError:
+#             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
+#         except ClientError as e:
+#             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#         except Exception as e:
+#             print(f"[ERROR] Unexpected error during file upload: {str(e)}")  # Debugging statement
+#             return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+#     def handle_chat(self, request):
+#         user_input = request.data.get("message", "").strip()
+#         user_id = request.data.get("user_id", "default_user")
+#         print(f"[DEBUG] Handling chat for user: {user_id}, message: {user_input}")
+
+#         if not user_input:
+#             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Get or create conversation chain for the user
+#         if user_id not in user_conversations:
+#             conversation_chain = ConversationChain(
+#                 llm=llm_chatgpt,
+#                 prompt=prompt_chatgpt,
+#                 input_key="user_input",
+#                 memory=ConversationBufferMemory()
+#             )
+#             user_conversations[user_id] = conversation_chain
+#         else:
+#             conversation_chain = user_conversations[user_id]
+
+#         # Check if user is confirming schema
+#         if user_id in user_schemas and user_id not in user_confirmations:
+#             # Process user confirmation
+#             assistant_response = self.process_schema_confirmation(user_input, user_id)
+#             return Response({"response": assistant_response, "show_generate_notebook": True})
+
+#         # Generate assistant response
+#         assistant_response = conversation_chain.run(user_input=user_input)
+#         print(f"[DEBUG] Assistant response: {assistant_response}")  # Debugging statement
+
+#         # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+#         if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+#             assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+#             print(f"[DEBUG] GENERATE_NOTEBOOK_PROMPT detected for user: {user_id}")
+#             return Response({
+#                 "response": assistant_response,
+#                 "show_generate_notebook": True
+#             })
+
+#         return Response({
+#             "response": assistant_response
+#         })
+
+#     def process_schema_confirmation(self, user_input, user_id):
+#         """
+#         Processes user confirmation or adjustment of the schema.
+#         """
+#         uploaded_file_info = user_schemas[user_id][0]
+#         suggestions = uploaded_file_info['suggestions']
+
+#         # Assume user confirms or provides adjustments
+#         if 'yes' in user_input.lower():
+#             user_confirmations[user_id] = {
+#                 'entity_id_column': suggestions['entity_id_column'],
+#                 'target_column': suggestions['target_column'],
+#                 'feature_columns': [{'column_name': col} for col in suggestions['feature_columns']]
+#             }
+#             # Provide confirmed details and prompt to generate notebook
+#             assistant_response = self.format_confirmation_message(user_confirmations[user_id])
+#             return assistant_response
+#         else:
+#             # Parse user adjustments
+#             adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+#             if adjusted_columns:
+#                 user_confirmations[user_id] = adjusted_columns
+#                 # Provide confirmed details and prompt to generate notebook
+#                 assistant_response = self.format_confirmation_message(adjusted_columns)
+#                 return assistant_response
+#             else:
+#                 return "I couldn't find those columns in the dataset. Please specify valid column names for the Entity ID and Target columns."
+
+#     def format_confirmation_message(self, confirmation):
+#         """
+#         Formats the confirmation message with confirmed details and includes 'GENERATE_NOTEBOOK_PROMPT'.
+#         """
+#         entity_id_column = confirmation['entity_id_column']
+#         target_column = confirmation['target_column']
+#         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+#         confirmation_text = (
+#             f"Great! You've confirmed the following details:\n\n"
+#             f"Entity ID Column: {entity_id_column}\n"
+#             f"Target Column: {target_column}\n"
+#             f"Feature Columns: {', '.join(feature_columns)}\n\n"
+#             "You can now generate the notebook to proceed with your analysis."
+#             "\n\nGENERATE_NOTEBOOK_PROMPT"
+#         )
+#         return confirmation_text
+
+#     def parse_user_adjustments(self, user_input, uploaded_file_info):
+#         """
+#         Parses user input for schema adjustments.
+#         """
+#         import re
+
+#         # Normalize the input
+#         user_input = user_input.lower()
+
+#         # Patterns to match possible ways the user might specify the columns
+#         entity_id_patterns = [
+#             r"entity\s*[:\-]?\s*(\w+)",
+#             r"entity id\s*[:\-]?\s*(\w+)",
+#             r"entity_id\s*[:\-]?\s*(\w+)",
+#             r"entity column\s*[:\-]?\s*(\w+)",
+#             r"entityid\s*[:\-]?\s*(\w+)",
+#             r"id\s*[:\-]?\s*(\w+)"
+#         ]
+
+#         target_column_patterns = [
+#             r"target\s*[:\-]?\s*(\w+)",
+#             r"target column\s*[:\-]?\s*(\w+)",
+#             r"predict\s*[:\-]?\s*(\w+)",
+#             r"prediction\s*[:\-]?\s*(\w+)",
+#             r"target is\s+(\w+)"
+#         ]
+
+#         entity_id_column = None
+#         target_column = None
+
+#         for pattern in entity_id_patterns:
+#             match = re.search(pattern, user_input)
+#             if match:
+#                 entity_id_column = match.group(1)
+#                 break
+
+#         for pattern in target_column_patterns:
+#             match = re.search(pattern, user_input)
+#             if match:
+#                 target_column = match.group(1)
+#                 break
+
+#         # Fallback to suggestions if not found
+#         suggestions = uploaded_file_info['suggestions']
+#         if not entity_id_column:
+#             entity_id_column = suggestions['entity_id_column']
+#         if not target_column:
+#             target_column = suggestions['target_column']
+
+#         # Check if the columns exist in the schema
+#         schema_columns = [col['column_name'] for col in uploaded_file_info['schema']]
+#         if entity_id_column not in schema_columns or target_column not in schema_columns:
+#             return None
+
+#         # Prepare feature columns
+#         feature_columns = [col for col in schema_columns if col not in [entity_id_column, target_column]]
+
+#         return {
+#             'entity_id_column': entity_id_column,
+#             'target_column': target_column,
+#             'feature_columns': [{'column_name': col} for col in feature_columns]
+#         }
+
+#     def reset_conversation(self, request):
+#         user_id = request.data.get("user_id", "default_user")
+#         # Remove user's conversation chain
+#         if user_id in user_conversations:
+#             del user_conversations[user_id]
+#         # Remove user's uploaded schema and confirmations
+#         if user_id in user_schemas:
+#             del user_schemas[user_id]
+#         if user_id in user_confirmations:
+#             del user_confirmations[user_id]
+#         if user_id in user_notebook_flags:
+#             del user_notebook_flags[user_id]
+#         if user_id in user_notebooks:
+#             del user_notebooks[user_id]
+#         print(f"[DEBUG] Conversation reset for user: {user_id}")  # Debugging statement
+#         return Response({"message": "Conversation reset successful."})
+
+#     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
+#         """
+#         Formats the schema information to be appended as an assistant message in the chat.
+#         """
+#         schema = uploaded_file['schema']
+#         target_column = uploaded_file['suggestions']['target_column']
+#         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+#         feature_columns = uploaded_file['suggestions']['feature_columns']
+#         schema_text = (
+#             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
+#             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
+#             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
+#             f"Suggested Target Column: {target_column or 'None'}\n"
+#             f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+#             f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+#             "Please confirm:\n"
+#             "- Is the Target Column correct?\n"
+#             "- Is the Entity ID Column correct?\n"
+#             "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
+#         )
+#         return schema_text
+
+#     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+#         """
+#         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
+#         """
+#         glue = get_glue_client()
+#         s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+#         storage_descriptor = {
+#             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
+#             'Location': s3_location,
+#             'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
+#             'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
+#             'SerdeInfo': {
+#                 'SerializationLibrary': 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe',
+#                 'Parameters': {
+#                     'field.delim': ',',
+#                     'skip.header.line.count': '1'
+#                 }
+#             }
+#         }
+#         try:
+#             glue.update_table(
+#                 DatabaseName=ATHENA_SCHEMA_NAME,
+#                 TableInput={
+#                     'Name': table_name,
+#                     'StorageDescriptor': storage_descriptor,
+#                     'TableType': 'EXTERNAL_TABLE'
+#                 }
+#             )
+#             print(f"[DEBUG] Glue table '{table_name}' updated successfully.")  # Debugging statement
+#         except glue.exceptions.EntityNotFoundException:
+#             print(f"[DEBUG] Table '{table_name}' not found. Creating a new table...")  # Debugging statement
+#             glue.create_table(
+#                 DatabaseName=ATHENA_SCHEMA_NAME,
+#                 TableInput={
+#                     'Name': table_name,
+#                     'StorageDescriptor': storage_descriptor,
+#                     'TableType': 'EXTERNAL_TABLE'
+#                 }
+#             )
+#             print(f"[DEBUG] Glue table '{table_name}' created successfully.")  # Debugging statement
+#         except Exception as e:
+#             print(f"[ERROR] Glue operation failed: {str(e)}")  # Debugging statement
+
+
+#     def sanitize_identifier(name):
+#         # Replace any character that is not a letter, number, or underscore with an underscore
+#         return re.sub(r'\W+', '_', name.lower())
+
+#     def validate_column_exists(column_name, columns_list):
+#         if column_name not in columns_list:
+#             print(f"[ERROR] Column '{column_name}' does not exist in the dataset.")
+#             return False
+#         return True
+
+#     def sanitize_notebook(nb):
+#         """Recursively sanitize the notebook object to replace NaN and Infinity values."""
+#         import numpy as np
+#         if isinstance(nb, dict):
+#             return {k: sanitize_notebook(v) for k, v in nb.items()}
+#         elif isinstance(nb, list):
+#             return [sanitize_notebook(v) for v in nb]
+#         elif isinstance(nb, float):
+#             if np.isnan(nb) or np.isinf(nb):
+#                 return None
+#             else:
+#                 return nb
+#         else:
+#             return nb
+
+#     def generate_notebook(self, request):
+#         """
+#         Generates notebooks with pre-filled SQL queries and executed results.
+#         """
+#         user_id = request.data.get("user_id", "default_user")
+#         print(f"[DEBUG] Generating notebook for user: {user_id}")
+
+#         if user_id not in user_confirmations:
+#             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         confirmation = user_confirmations[user_id]
+#         entity_id_column = confirmation['entity_id_column']
+#         target_column = confirmation['target_column']
+#         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+#         # Get the table name from the uploaded file info
+#         if user_id in user_schemas:
+#             uploaded_file_info = user_schemas[user_id][0]
+#             table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
+#             table_name = sanitize_identifier(table_name_raw)
+#         else:
+#             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Get the list of columns from the schema
+#         columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
+
+#         # Validate entity_id_column and target_column
+#         if not validate_column_exists(entity_id_column, columns_list):
+#             return Response({"error": f"Entity ID column '{entity_id_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         if not validate_column_exists(target_column, columns_list):
+#             return Response({"error": f"Target column '{target_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Ensure the table exists
+#         if not wait_for_table_creation(table_name):
+#             return Response({"error": f"Table '{table_name}' is not available."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # Create notebooks with SQL queries and executed results
+#         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name, columns_list)
+#         notebook_features = self.create_features_notebook(feature_columns, table_name, columns_list)
+
+#         # Sanitize notebooks to replace NaN and Infinity values
+#         notebook_entity_target_sanitized = sanitize_notebook(notebook_entity_target)
+#         notebook_features_sanitized = sanitize_notebook(notebook_features)
+
+#         # Store notebooks in user_notebooks dictionary
+#         user_notebooks[user_id] = {
+#             'entity_target_notebook': notebook_entity_target_sanitized,
+#             'features_notebook': notebook_features_sanitized
+#         }
+
+#         print("[DEBUG] Notebooks generated and stored successfully.")  # Debugging statement
+
+#         return Response({
+#             "message": "Notebooks generated successfully.",
+#             "notebooks": user_notebooks[user_id]
+#         }, status=status.HTTP_200_OK)
+
+#     def create_entity_target_notebook(self, entity_id_column, target_column, table_name, columns_list):
+#         """
+#         Creates a notebook for Entity ID and Target analysis with SQL queries and executed results.
+#         """
+#         nb = new_notebook()
+#         cells = []
+
+#         # Introduction cell
+#         cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+#         # Sanitize columns
+#         sanitized_entity_id_column = sanitize_identifier(entity_id_column)
+#         sanitized_target_column = sanitize_identifier(target_column)
+
+#         # SQL query cell
+#         sql_query_entity_target = f"SELECT {sanitized_entity_id_column}, {sanitized_target_column} FROM {table_name} LIMIT 100;"
+
+#         # Execute the query and get results
+#         df_result = execute_sql_query(sql_query_entity_target)
+#         if df_result.empty:
+#             error_message = f"No data returned for query: {sql_query_entity_target}"
+#             print(f"[ERROR] {error_message}")
+#             cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+#         else:
+#             print(f"[DEBUG] DataFrame shape: {df_result.shape}")
+#             print(f"[DEBUG] DataFrame head:\n{df_result.head()}")
+
+#             # Replace NaN and Inf values with None
+#             df_result = df_result.replace([np.nan, np.inf, -np.inf], None)
+
+#             result_json = df_result.to_dict(orient='records')
+
+#             # Add the SQL query to the cell
+#             code_cell = new_code_cell(sql_query_entity_target)
+
+#             # Attach the result to the code cell's outputs using new_output
+#             code_cell.outputs = [
+#                 new_output(
+#                     output_type='execute_result',
+#                     data={
+#                         'application/json': result_json
+#                     },
+#                     metadata={},
+#                     execution_count=None
+#                 )
+#             ]
+
+#             cells.append(code_cell)
+
+#         nb['cells'] = cells
+
+#         return nb
+
+#     def create_features_notebook(self, feature_columns, table_name, columns_list):
+#         """
+#         Creates a notebook for Features analysis with SQL queries and executed results.
+#         """
+#         nb = new_notebook()
+#         cells = []
+
+#         # Introduction cell
+#         cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+#         # Feature columns analysis
+#         for feature in feature_columns:
+#             # Validate feature column exists
+#             if not validate_column_exists(feature, columns_list):
+#                 cells.append(new_markdown_cell(f"**Error:** Feature column '{feature}' does not exist in the dataset."))
+#                 continue
+
+#             # Add a markdown cell for each feature
+#             cells.append(new_markdown_cell(f"## Feature Column: {feature}"))
+
+#             # Sanitize column name
+#             sanitized_feature = sanitize_identifier(feature)
+
+#             # SQL query cell
+#             sql_query_feature = f"SELECT {sanitized_feature}, COUNT(*) as count FROM {table_name} GROUP BY {sanitized_feature} ORDER BY count DESC LIMIT 100;"
+
+#             # Execute the query and get results
+#             df_result = execute_sql_query(sql_query_feature)
+#             if df_result.empty:
+#                 error_message = f"No data returned for feature '{feature}'."
+#                 print(f"[ERROR] {error_message}")
+#                 cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+#                 continue
+#             else:
+#                 print(f"[DEBUG] Feature: {feature}, DataFrame shape: {df_result.shape}")
+#                 print(f"[DEBUG] DataFrame head:\n{df_result.head()}")
+
+#                 # Replace NaN and Inf values with None
+#                 df_result = df_result.replace([np.nan, np.inf, -np.inf], None)
+
+#                 result_json = df_result.to_dict(orient='records')
+
+#                 # Add the SQL query to the cell
+#                 code_cell = new_code_cell(sql_query_feature)
+
+#                 # Attach the result to the code cell's outputs using new_output
+#                 code_cell.outputs = [
+#                     new_output(
+#                         output_type='execute_result',
+#                         data={
+#                             'application/json': result_json
+#                         },
+#                         metadata={},
+#                         execution_count=None
+#                     )
+#                 ]
+
+#                 cells.append(code_cell)
+
+#         nb['cells'] = cells
+
+#         return nb
+
+#     def wait_for_table_creation(table_name, timeout=60):
+#         import time
+#         glue_client = get_glue_client()
+#         start_time = time.time()
+#         while time.time() - start_time < timeout:
+#             try:
+#                 glue_client.get_table(DatabaseName=ATHENA_SCHEMA_NAME, Name=table_name)
+#                 print(f"[DEBUG] Glue table '{table_name}' is now available.")
+#                 return True
+#             except glue_client.exceptions.EntityNotFoundException:
+#                 time.sleep(5)
+#             except Exception as e:
+#                 print(f"[ERROR] Unexpected error while checking table availability: {str(e)}")
+#                 return False
+#             print(f"[ERROR] Glue table '{table_name}' did not become available within {timeout} seconds.")
+#             return False
+
+
+
+
+# chat/views.py
 
 import os
 import datetime
 from io import BytesIO
 from typing import Any, Dict, List
-from langchain.schema import AIMessage, HumanMessage
+import uuid
 import boto3
 import pandas as pd
 import openai
+from django.db import transaction
 from botocore.exceptions import ClientError, NoCredentialsError
 from django.conf import settings
 from rest_framework import status
+from django.core.exceptions import ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,8 +5907,15 @@ from langchain.chains import ConversationChain
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
+from langchain.schema import AIMessage
+from sqlalchemy import Transaction
+from sqlalchemy.engine import create_engine
 from .models import FileSchema, UploadedFile
 from .serializers import UploadedFileSerializer
+import re
+# import nbformat
+from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+import numpy as np
 
 # ===========================
 # AWS Configuration
@@ -28,6 +5924,11 @@ AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME')
 AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+AWS_ATHENA_S3_STAGING_DIR = os.getenv('AWS_ATHENA_S3_STAGING_DIR')  # Ensure it's set in settings.py
+AWS_REGION_NAME = AWS_S3_REGION_NAME  # Assuming it's the same as the S3 region
+
+# Set the Athena database (schema) name
+ATHENA_SCHEMA_NAME = 'pa_user_datafiles_db'  # Replace with your actual Athena database name
 
 # ===========================
 # OpenAI Configuration
@@ -39,39 +5940,21 @@ openai.api_key = OPENAI_API_KEY
 # Initialize OpenAI LangChain model for ChatGPT
 # ===========================
 llm_chatgpt = ChatOpenAI(
-    # model="gpt-3.5-turbo-16k",
-     model="gpt-4",
-    
-    # model = "gpt-4",
-
+    model="gpt-3.5-turbo-16k",
     temperature=0.7,
     openai_api_key=OPENAI_API_KEY,
 )
 
-# LangChain prompt with memory integration for ChatGPT
-# prompt_chatgpt = PromptTemplate(
-#     input_variables=["history", "user_input"],
-#     template=(
-#         "You are a helpful PACX AI assistant. You guide users through defining predictive questions and refining goals.\n"
-#         # "If the user uploads a dataset, integrate the schema into the conversation to assist with column identification.\n\n"
-#         "Steps:\n"
-#         "1. Discuss the Subject they want to predict.\n"
-#         "2. Confirm the Target Value they want to predict.\n"
-#         "3. Check if there's a specific time frame for the prediction.\n"
-#         "4. Reference the dataset schema if available.\n"
-#         "5. Summarize inputs before proceeding to model creation.\n\n"
-#         "Conversation history: {history}\n"
-#         "User input: {user_input}\n"
-#         "Assistant:"
-#     ),
-# )
-
+# Global dictionaries to store user-specific data
 user_conversations = {}
+user_schemas = {}
+user_confirmations = {}
+user_notebook_flags = {}
+user_notebooks = {}  # Stores generated notebooks for each user
 
 # Modify the prompt in the existing code
-# Adding system instructions to guide the model
 prompt_chatgpt = PromptTemplate(
-    input_variables=["history", "user_input"],  # Remove system_instructions from here
+    input_variables=["history", "user_input"],
     template=(
         "You are a helpful PACX AI assistant. Your job is to guide users through defining predictive questions and refining goals. "
         "You must strictly follow the step-by-step process outlined in the prompt. Do not deviate from the steps or answer prematurely. "
@@ -87,21 +5970,11 @@ prompt_chatgpt = PromptTemplate(
         "Assistant:"
     ),
 )
-from langchain.schema import SystemMessage
-
-memory = ConversationBufferMemory()
-memory.chat_memory.add_message(SystemMessage(content="You are a helpful PACX AI assistant. Follow the steps strictly and assist users with predictive questions."))
-
-conversation_chain_chatgpt = ConversationChain(
-    llm=llm_chatgpt,
-    prompt=prompt_chatgpt,
-    input_key="user_input",
-    memory=ConversationBufferMemory(),  # Add memory instance
-)
 
 # ===========================
 # Utility Functions
 # ===========================
+
 def get_s3_client():
     """
     Creates and returns an AWS S3 client.
@@ -128,7 +6001,16 @@ def infer_column_dtype(series: pd.Series) -> str:
     """
     Infers the correct data type for a column by handling mixed types.
     """
-    series = series.dropna().astype(str).str.strip()  # Handle mixed types and strip whitespace
+    series = series.dropna().astype(str).str.strip()
+
+    # Try datetime with specified format
+    date_formats = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"]  # Add more formats as needed
+    for date_format in date_formats:
+        try:
+            pd.to_datetime(series, format=date_format, errors='raise')
+            return "timestamp"
+        except ValueError:
+            continue
 
     # Try boolean
     boolean_values = {'true', 'false', '1', '0', 'yes', 'no'}
@@ -159,58 +6041,12 @@ def infer_column_dtype(series: pd.Series) -> str:
     # Default to string
     return "string"
 
-# def suggest_target_column(df: pd.DataFrame) -> Any:
-#     """
-#     Suggests a target column based on numeric data types.
-#     """
-#     numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
-#     return numeric_cols[0] if len(numeric_cols) > 0 else None
-
-def get_user_specified_target(chat_history: List[Any]) -> str:
-    """
-    Extracts user-specified target column from chat history if available.
-    """
-    for message in reversed(chat_history):  # Traverse messages in reverse order to find the latest target
-        if isinstance(message, HumanMessage):  # Only check user messages
-            if "target column" in message.content.lower():
-                # Extract the column name (customize regex as needed)
-                import re
-                match = re.search(r"target column: (\w+)", message.content, re.IGNORECASE)
-                if match:
-                    return match.group(1)
-    return None
-
-
-
-from langchain.schema import HumanMessage
-
 def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
     """
     Suggests a target column based on user input or predictive question.
     """
-    # Check if the user specified a target column
-    user_target = get_user_specified_target(chat_history)
-    if user_target and user_target in df.columns:
-        return user_target
-
-    # Use LLM to predict the target column based on a description (if available)
-    target_suggestion_prompt = (
-        f"The user uploaded a dataset with the following columns: {', '.join(df.columns)}.\n"
-        "Based on the context of their predictive question, suggest the best target column."
-    )
-    response = llm_chatgpt.invoke([HumanMessage(content=target_suggestion_prompt)])
-    suggested_column = response.content.strip()
-    return suggested_column if suggested_column in df.columns else None
-
-
-# def suggest_entity_id_column(df: pd.DataFrame) -> Any:
-#     """
-#     Suggests an entity ID column based on uniqueness.
-#     """
-#     for col in df.columns:
-#         if df[col].is_unique:
-#             return col
-#     return None
+    # Use the last column as a default suggestion
+    return df.columns[-1]
 
 def suggest_entity_id_column(df: pd.DataFrame) -> Any:
     """
@@ -218,7 +6054,7 @@ def suggest_entity_id_column(df: pd.DataFrame) -> Any:
     """
     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
     for col in likely_id_columns:
-        if df[col].nunique() / len(df) > 0.95:  # At least 95% unique values
+        if df[col].nunique() / len(df) > 0.95:
             return col
 
     # Fallback: Find any column with >95% unique values
@@ -227,52 +6063,69 @@ def suggest_entity_id_column(df: pd.DataFrame) -> Any:
             return col
     return None
 
+def execute_sql_query(query: str) -> pd.DataFrame:
+    """
+    Executes a SQL query using AWS Athena and returns the results as a Pandas DataFrame.
+    """
+    try:
+        if not AWS_ATHENA_S3_STAGING_DIR:
+            raise ValueError("AWS_ATHENA_S3_STAGING_DIR is not set. Please set it in your environment variables or settings.")
+        print(f"[DEBUG] AWS_ATHENA_S3_STAGING_DIR: {AWS_ATHENA_S3_STAGING_DIR}")
 
+        # Create an SQLAlchemy engine for Athena
+        connection_string = (
+            f"awsathena+rest://{AWS_ACCESS_KEY_ID}:{AWS_SECRET_ACCESS_KEY}@athena.{AWS_REGION_NAME}.amazonaws.com:443/"
+            f"{ATHENA_SCHEMA_NAME}?s3_staging_dir={AWS_ATHENA_S3_STAGING_DIR}"
+        )
+        engine = create_engine(connection_string)
 
+        print(f"[DEBUG] Executing query: {query}")
+        df = pd.read_sql_query(query, engine)
+        print(f"[DEBUG] Query executed successfully, retrieved {len(df)} rows.")
+        return df
+    except Exception as e:
+        print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
+        return pd.DataFrame()  # Return an empty DataFrame on error
 
 # ===========================
 # Unified ChatGPT API
 # ===========================
+
 class UnifiedChatGPTAPI(APIView):
     """
     Unified API for handling ChatGPT-based chat interactions and file uploads.
     Endpoint: /api/chatgpt/
     """
-    parser_classes = [MultiPartParser, FormParser, JSONParser]  # Include JSONParser
-    uploaded_schema_by_user = {}
-
-    
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
         """
-        Handles POST requests for both chat messages and file uploads.
+        Handles POST requests for chat messages and file uploads.
         Differentiates based on the presence of files in the request.
         """
         action = request.data.get('action', '')
         if action == 'reset':
             return self.reset_conversation(request)
-        if "file" in request.FILES:  # If files are present, handle file uploads
+        if action == 'generate_notebook':
+            return self.generate_notebook(request)
+        if "file" in request.FILES:
             return self.handle_file_upload(request, request.FILES.getlist("file"))
 
         # Else, handle chat message
         return self.handle_chat(request)
-    
-    # def post(self, request):
-        
 
     def handle_file_upload(self, request, files: List[Any]):
         """
         Handles multiple file uploads, processes them, uploads to AWS S3, updates AWS Glue, and saves schema in DB.
         After processing, appends schema details to the chat messages.
         """
-
         files = request.FILES.getlist("file")
         if not files:
+            print("[ERROR] No files provided in the request.")
             return Response({"error": "No files provided."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        user_id = request.data.get("user_id", "default_user") 
-        
-        
+
+        user_id = request.data.get("user_id", "default_user")
+        print(f"[DEBUG] Handling file upload for user: {user_id}")
 
         try:
             uploaded_files_info = []
@@ -280,22 +6133,49 @@ class UnifiedChatGPTAPI(APIView):
             glue = get_glue_client()
 
             for file in files:
+                print(f"[DEBUG] Processing file: {file.name}")
+
                 # Validate file format
                 if not file.name.lower().endswith(('.csv', '.xlsx')):
+                    print(f"[ERROR] Unsupported file format for file {file.name}. Only CSV and Excel are allowed.")
                     return Response({"error": f"Unsupported file format for file {file.name}. Only CSV and Excel are allowed."}, status=status.HTTP_400_BAD_REQUEST)
-                
-            
+
                 # Read file into Pandas DataFrame
-                if file.name.lower().endswith('.csv'):
-                    df = pd.read_csv(file)
-                else:
-                    df = pd.read_excel(file)
+                try:
+                    if file.name.lower().endswith('.csv'):
+                        df = pd.read_csv(file, low_memory=False, encoding='utf-8', delimiter=',', na_values=['NA', 'N/A', ''])
+                    else:
+                        df = pd.read_excel(file, engine='openpyxl')
+                    print(f"[DEBUG] File loaded successfully: {file.name}, Rows: {df.shape[0]}, Columns: {df.shape[1]}")
+
+                    if df.empty:
+                        print(f"[ERROR] Uploaded file {file.name} is empty.")
+                        return Response({"error": f"Uploaded file {file.name} is empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+                    if not df.columns.any():
+                        print(f"[ERROR] Uploaded file {file.name} has no columns.")
+                        return Response({"error": f"Uploaded file {file.name} has no columns."}, status=status.HTTP_400_BAD_REQUEST)
+                except pd.errors.ParserError as e:
+                    print(f"[ERROR] CSV parsing error for file {file.name}: {e}")
+                    return Response({"error": f"CSV parsing error for file {file.name}: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+                except Exception as e:
+                    print(f"[ERROR] Error reading file {file.name}: {e}")
+                    return Response({"error": f"Error reading file {file.name}: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
                 # Normalize column headers
-                df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
-                # print(f"DataFrame columns: {df.columns.tolist()}")  # Debugging statement
+                normalized_columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
+                if len(normalized_columns) != len(set(normalized_columns)):
+                    print("[ERROR] Duplicate columns detected after normalization.")
+                    return Response({"error": "Duplicate columns detected after normalization."}, status=status.HTTP_400_BAD_REQUEST)
 
-                # Infer schema
+                if any(col == '' for col in normalized_columns):
+                    print("[ERROR] Some columns have empty names after normalization.")
+                    return Response({"error": "Some columns have empty names after normalization."}, status=status.HTTP_400_BAD_REQUEST)
+
+                df.columns = normalized_columns
+                print(f"[DEBUG] Normalized DataFrame columns: {df.columns.tolist()}")
+
+                # Infer schema with precision
                 schema = [
                     {
                         "column_name": col,
@@ -303,132 +6183,168 @@ class UnifiedChatGPTAPI(APIView):
                     }
                     for col in df.columns
                 ]
-                # print(f"Inferred schema: {schema}")  # Debugging statement
+                print(f"[DEBUG] Inferred schema: {schema}")
 
                 # Convert Boolean Columns to 'true'/'false' Strings
                 boolean_columns = [col['column_name'] for col in schema if col['data_type'] == 'boolean']
+                replacement_dict = {
+                    '1': 'true',
+                    '0': 'false',
+                    'yes': 'true',
+                    'no': 'false',
+                    't': 'true',
+                    'f': 'false',
+                    'y': 'true',
+                    'n': 'false',
+                    'true': 'true',
+                    'false': 'false',
+                }
                 for col in boolean_columns:
-                    df[col] = df[col].astype(str).str.strip().str.lower()
-                    df[col] = df[col].replace({'1': 'true', '0': 'false', 'yes': 'true', 'no': 'false'})
-                # print(f"Boolean columns converted: {boolean_columns}")  # Debugging statement
+                    df[col] = df[col].astype(str).str.strip().str.lower().replace(replacement_dict)
 
-                # Handle Duplicate Files Dynamically
+                    # Validate boolean conversion
+                    unexpected_values = df[col].unique().tolist()
+                    unexpected_values = [val for val in unexpected_values if val not in ['true', 'false']]
+                    if unexpected_values:
+                        print(f"[ERROR] Unexpected boolean values in column {col}: {unexpected_values}")
+                        return Response({"error": f"Unexpected boolean values in column {col}: {unexpected_values}"}, status=status.HTTP_400_BAD_REQUEST)
+                print(f"[DEBUG] Boolean columns converted: {boolean_columns}")
+
+                # Handle Duplicate Files Dynamically with UUID
                 file_name_base, file_extension = os.path.splitext(file.name)
                 file_name_base = file_name_base.lower().replace(' ', '_')
+                unique_id = uuid.uuid4().hex[:8]
+                new_file_name = f"{file_name_base}_{unique_id}{file_extension}"
+                s3_file_name = os.path.splitext(new_file_name)[0] + '.csv'
+                file_key = f"uploads/{unique_id}/{s3_file_name}"
 
-                existing_file = UploadedFile.objects.filter(name=file.name).first()
-                if existing_file:
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-                    new_file_name = f"{file_name_base}_{timestamp}{file_extension}"
-                    file.name = new_file_name
-                    print(f"Duplicate file detected. Renaming file to: {new_file_name}")  # Debugging statement
-                else:
-                    print(f"File name is unique: {file.name}")  # Debugging statement
+                print(f"[DEBUG] Uploading file as: {new_file_name} to S3 key: {file_key}")
 
-                # Save Metadata to Database
-                file.seek(0)  # Reset file pointer before saving
-                file_serializer = UploadedFileSerializer(data={'name': file.name, 'file': file})
-                if file_serializer.is_valid():
-                    file_instance = file_serializer.save()
+                # Save Metadata to Database within a transaction
+                try:
+                    with transaction.atomic():
+                        # Initialize serializer with original file
+                        file_serializer = UploadedFileSerializer(data={'name': new_file_name, 'file': file})
 
-                    # Convert DataFrame to CSV and Upload to S3
-                    csv_buffer = BytesIO()
-                    df.to_csv(csv_buffer, index=False)
-                    csv_buffer.seek(0)
-                    s3_file_name = os.path.splitext(file.name)[0] + '.csv'
-                    file_key = f"uploads/{s3_file_name}"
+                        # Debug: Check file content snippet
+                        file.seek(0)
+                        content_snippet = file.read(100).decode('utf-8', errors='ignore')
+                        print(f"[DEBUG] File content snippet:\n{content_snippet}")
+                        file.seek(0)  # Reset pointer after reading
 
-                    # Upload to AWS S3
-                    s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+                        if file_serializer.is_valid():
+                            file_instance = file_serializer.save()
 
-                    # Generate file URL
-                    file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
-                    file_instance.file_url = file_url
-                    file_instance.save()
+                            # Convert DataFrame to CSV and Upload to S3
+                            csv_buffer = BytesIO()
+                            df.to_csv(csv_buffer, index=False, encoding='utf-8')
+                            csv_buffer.seek(0)
 
-                    # Save Schema to Database
-                    FileSchema.objects.create(file=file_instance, schema=schema)
+                            # Upload to AWS S3 with validation
+                            try:
+                                s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
+                                # Verify upload
+                                s3.head_object(Bucket=AWS_STORAGE_BUCKET_NAME, Key=file_key)
+                                print(f"[DEBUG] File uploaded to S3: {file_key}")
+                            except ClientError as e:
+                                print(f"[ERROR] S3 upload failed for {file_key}: {e}")
+                                raise
 
-                    # Trigger AWS Glue Table Update
-                    self.trigger_glue_update(file_name_base, schema, file_key)
+                            # Generate file URL
+                            file_url = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+                            file_instance.file_url = file_url
+                            file_instance.save()
 
-                    # Append file info to response
-                    uploaded_files_info.append({
-                        'id': file_instance.id,
-                        'name': file_instance.name,
-                        'file_url': file_instance.file_url,
-                        'schema': schema,
-                        'suggestions': {  # Add suggestions based on the data
-                            'target_column': suggest_target_column(df, conversation_chain_chatgpt.memory.chat_memory.messages),
-                            'entity_id_column': suggest_entity_id_column(df),
-                        }
-                    })
-                    
-                else:
-                    return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                            # Save Schema to Database
+                            FileSchema.objects.create(file=file_instance, schema=schema)
+                            print(f"[DEBUG] Schema saved to database for file: {new_file_name}")
 
-            # Format schema messages to append to assistant conversation
-            schema_messages = [self.format_schema_message(uploaded_file) for uploaded_file in uploaded_files_info]
-            combined_schema_message = "\n\n".join(schema_messages)
-            # print(f"Combined schema message for chat: {combined_schema_message}")  # Debugging statement
+                            # Calculate file size in megabytes
+                            file_size_mb = file.size / (1024 * 1024)
+                            print(f"[DEBUG] File size: {file_size_mb:.2f} MB")
 
+                            # Trigger AWS Glue Table Update
+                            self.trigger_glue_update(new_file_name, schema, file_key, file_size_mb)
+
+                            # Append file info to response
+                            uploaded_files_info.append({
+                                'id': file_instance.id,
+                                'name': file_instance.name,
+                                'file_url': file_instance.file_url,
+                                'schema': schema,
+                                'file_size_mb': file_size_mb,
+                                'suggestions': {
+                                    'target_column': suggest_target_column(df, []),
+                                    'entity_id_column': suggest_entity_id_column(df),
+                                    'feature_columns': [col for col in df.columns if col not in [suggest_entity_id_column(df), suggest_target_column(df, [])]]
+                                }
+                            })
+                        else:
+                            print(f"[ERROR] File serializer validation failed: {file_serializer.errors}")
+                            return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                except ClientError as e:
+                    print(f"[ERROR] AWS ClientError during file upload: {e}")
+                    return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                except Exception as e:
+                    print(f"[ERROR] Unexpected error during database operations: {e}")
+                    return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             # Store schema for user
-            UnifiedChatGPTAPI.uploaded_schema_by_user[user_id] = combined_schema_message
+            user_schemas[user_id] = uploaded_files_info
+            print(f"[DEBUG] Stored schema for user: {user_id}")
 
-            if hasattr(conversation_chain_chatgpt.memory, "chat_memory"):
-                conversation_chain_chatgpt.memory.chat_memory.messages.append(
-                    HumanMessage(content=f"Schema for '{file.name}': {combined_schema_message}")
+            # Initiate schema discussion with the user
+            schema_discussion = self.format_schema_message(uploaded_files_info[0])
+            print(f"[DEBUG] Schema discussion message: {schema_discussion}")
+
+            # Create or get user's conversation chain
+            if user_id not in user_conversations:
+                conversation_chain = ConversationChain(
+                    llm=llm_chatgpt,
+                    prompt=prompt_chatgpt,
+                    input_key="user_input",
+                    memory=ConversationBufferMemory()
                 )
+                user_conversations[user_id] = conversation_chain
+            else:
+                conversation_chain = user_conversations[user_id]
 
+            # Add the schema discussion to the assistant's messages
+            conversation_chain.memory.chat_memory.messages.append(
+                AIMessage(content=schema_discussion)
+            )
 
             return Response({
                 "message": "Files uploaded and processed successfully.",
                 "uploaded_files": uploaded_files_info,
-                "chat_message": combined_schema_message  # Include chat_message in the response
+                "chat_message": schema_discussion
             }, status=status.HTTP_201_CREATED)
 
         except pd.errors.EmptyDataError:
+            print("[ERROR] One of the files is empty or invalid.")
             return Response({'error': 'One of the files is empty or invalid.'}, status=status.HTTP_400_BAD_REQUEST)
         except NoCredentialsError:
+            print("[ERROR] AWS credentials not available.")
             return Response({'error': 'AWS credentials not available.'}, status=status.HTTP_403_FORBIDDEN)
         except ClientError as e:
+            print(f"[ERROR] AWS ClientError: {e}")
             return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ValidationError as e:
+            print(f"[ERROR] Validation error: {e}")
+            return Response({'error': f'Validation error: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            print(f"Unexpected error during file upload: {str(e)}")  # Debugging statement
-            return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    # def handle_chat(self, request):
-    #     """
-    #     Handles user chat messages using ChatGPT.
-    #     """
-    #     user_input = request.data.get("message", "").strip()
-    #     user_id = request.data.get("user_id", "default_user")
+            print(f"[ERROR] Unexpected error during file upload: {str(e)}")
+            return Response({'error': 'File processing failed due to an unexpected error.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    #     if not user_input:
-    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-    #     # Fetch schema for the user session
-    #     uploaded_schema = UnifiedChatGPTAPI.uploaded_schema_by_user.get(user_id, "")
-
-    #     # Pass schema into the conversation prompt
-    #     assistant_response = conversation_chain_chatgpt.run(
-    #         user_input=f"{user_input}\n\nUploaded Schema:\n{uploaded_schema}"
-    #     )
-
-    #     return Response({
-    #         "response": assistant_response
-    #     })
 
     def handle_chat(self, request):
         user_input = request.data.get("message", "").strip()
         user_id = request.data.get("user_id", "default_user")
+        print(f"[DEBUG] Handling chat for user: {user_id}, message: {user_input}")
 
         if not user_input:
             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Fetch schema for the user session
-        uploaded_schema = UnifiedChatGPTAPI.uploaded_schema_by_user.get(user_id, "")
 
         # Get or create conversation chain for the user
         if user_id not in user_conversations:
@@ -442,31 +6358,155 @@ class UnifiedChatGPTAPI(APIView):
         else:
             conversation_chain = user_conversations[user_id]
 
-        assistant_response = conversation_chain.run(
-            user_input=f"{user_input}\n\nUploaded Schema:\n{uploaded_schema}"
-        )
+        # Check if user is confirming schema
+        if user_id in user_schemas and user_id not in user_confirmations:
+            # Process user confirmation
+            assistant_response = self.process_schema_confirmation(user_input, user_id)
+            return Response({"response": assistant_response, "show_generate_notebook": True})
+
+        # Generate assistant response
+        assistant_response = conversation_chain.run(user_input=user_input)
+        print(f"[DEBUG] Assistant response: {assistant_response}")  # Debugging statement
+
+        # Check if assistant should prompt 'GENERATE_NOTEBOOK_PROMPT'
+        if 'GENERATE_NOTEBOOK_PROMPT' in assistant_response:
+            assistant_response = assistant_response.replace('GENERATE_NOTEBOOK_PROMPT', '').strip()
+            print(f"[DEBUG] GENERATE_NOTEBOOK_PROMPT detected for user: {user_id}")
+            return Response({
+                "response": assistant_response,
+                "show_generate_notebook": True
+            })
 
         return Response({
             "response": assistant_response
         })
+
+    def process_schema_confirmation(self, user_input, user_id):
+        """
+        Processes user confirmation or adjustment of the schema.
+        """
+        uploaded_file_info = user_schemas[user_id][0]
+        suggestions = uploaded_file_info['suggestions']
+
+        # Assume user confirms or provides adjustments
+        if 'yes' in user_input.lower():
+            user_confirmations[user_id] = {
+                'entity_id_column': suggestions['entity_id_column'],
+                'target_column': suggestions['target_column'],
+                'feature_columns': [{'column_name': col} for col in suggestions['feature_columns']]
+            }
+            # Provide confirmed details and prompt to generate notebook
+            assistant_response = self.format_confirmation_message(user_confirmations[user_id])
+            return assistant_response
+        else:
+            # Parse user adjustments
+            adjusted_columns = self.parse_user_adjustments(user_input, uploaded_file_info)
+            if adjusted_columns:
+                user_confirmations[user_id] = adjusted_columns
+                # Provide confirmed details and prompt to generate notebook
+                assistant_response = self.format_confirmation_message(adjusted_columns)
+                return assistant_response
+            else:
+                return "I couldn't find those columns in the dataset. Please specify valid column names for the Entity ID and Target columns."
+
+    def format_confirmation_message(self, confirmation):
+        """
+        Formats the confirmation message with confirmed details and includes 'GENERATE_NOTEBOOK_PROMPT'.
+        """
+        entity_id_column = confirmation['entity_id_column']
+        target_column = confirmation['target_column']
+        feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+        confirmation_text = (
+            f"Great! You've confirmed the following details:\n\n"
+            f"Entity ID Column: {entity_id_column}\n"
+            f"Target Column: {target_column}\n"
+            f"Feature Columns: {', '.join(feature_columns)}\n\n"
+            "You can now generate the notebook to proceed with your analysis."
+            # "\n\nGENERATE_NOTEBOOK_PROMPT"
+        )
+        return confirmation_text
+
+    def parse_user_adjustments(self, user_input, uploaded_file_info):
+        """
+        Parses user input for schema adjustments.
+        """
+        import re
+
+        # Normalize the input
+        user_input = user_input.lower()
+
+        # Patterns to match possible ways the user might specify the columns
+        entity_id_patterns = [
+            r"entity\s*[:\-]?\s*(\w+)",
+            r"entity id\s*[:\-]?\s*(\w+)",
+            r"entity_id\s*[:\-]?\s*(\w+)",
+            r"entity column\s*[:\-]?\s*(\w+)",
+            r"entityid\s*[:\-]?\s*(\w+)",
+            r"id\s*[:\-]?\s*(\w+)"
+        ]
+
+        target_column_patterns = [
+            r"target\s*[:\-]?\s*(\w+)",
+            r"target column\s*[:\-]?\s*(\w+)",
+            r"predict\s*[:\-]?\s*(\w+)",
+            r"prediction\s*[:\-]?\s*(\w+)",
+            r"target is\s+(\w+)"
+        ]
+
+        entity_id_column = None
+        target_column = None
+
+        for pattern in entity_id_patterns:
+            match = re.search(pattern, user_input)
+            if match:
+                entity_id_column = match.group(1)
+                break
+
+        for pattern in target_column_patterns:
+            match = re.search(pattern, user_input)
+            if match:
+                target_column = match.group(1)
+                break
+
+        # Fallback to suggestions if not found
+        suggestions = uploaded_file_info['suggestions']
+        if not entity_id_column:
+            entity_id_column = suggestions['entity_id_column']
+        if not target_column:
+            target_column = suggestions['target_column']
+
+        # Check if the columns exist in the schema
+        schema_columns = [col['column_name'] for col in uploaded_file_info['schema']]
+        if entity_id_column not in schema_columns or target_column not in schema_columns:
+            return None
+
+        # Prepare feature columns
+        feature_columns = [col for col in schema_columns if col not in [entity_id_column, target_column]]
+
+        return {
+            'entity_id_column': entity_id_column,
+            'target_column': target_column,
+            'feature_columns': [{'column_name': col} for col in feature_columns]
+        }
 
     def reset_conversation(self, request):
         user_id = request.data.get("user_id", "default_user")
         # Remove user's conversation chain
         if user_id in user_conversations:
             del user_conversations[user_id]
-        # Remove user's uploaded schema
-        if user_id in UnifiedChatGPTAPI.uploaded_schema_by_user:
-            del UnifiedChatGPTAPI.uploaded_schema_by_user[user_id]
+        # Remove user's uploaded schema and confirmations
+        if user_id in user_schemas:
+            del user_schemas[user_id]
+        if user_id in user_confirmations:
+            del user_confirmations[user_id]
+        if user_id in user_notebook_flags:
+            del user_notebook_flags[user_id]
+        if user_id in user_notebooks:
+            del user_notebooks[user_id]
+        print(f"[DEBUG] Conversation reset for user: {user_id}")  # Debugging statement
         return Response({"message": "Conversation reset successful."})
 
-
-
-    
-    
-
-
-    
     def format_schema_message(self, uploaded_file: Dict[str, Any]) -> str:
         """
         Formats the schema information to be appended as an assistant message in the chat.
@@ -474,26 +6514,30 @@ class UnifiedChatGPTAPI(APIView):
         schema = uploaded_file['schema']
         target_column = uploaded_file['suggestions']['target_column']
         entity_id_column = uploaded_file['suggestions']['entity_id_column']
+        feature_columns = uploaded_file['suggestions']['feature_columns']
         schema_text = (
             f"Dataset '{uploaded_file['name']}' uploaded successfully!\n\n"
             "Columns:\n" + ", ".join([col['column_name'] for col in schema]) + "\n\n"
             "Data Types:\n" + "\n".join([f"{col['column_name']}: {col['data_type']}" for col in schema]) + "\n\n"
-            f"Target Column Suggestion: {target_column or 'None provided'}\n"
-            f"Entity ID Column Suggestion: {entity_id_column or 'None provided'}\n\n"
-            "Please confirm:\n\n"
+            f"Suggested Target Column: {target_column or 'None'}\n"
+            f"Suggested Entity ID Column: {entity_id_column or 'None'}\n"
+            f"Suggested Feature Columns: {', '.join(feature_columns)}\n\n"
+            "Please confirm:\n"
             "- Is the Target Column correct?\n"
             "- Is the Entity ID Column correct?\n"
-            '(Reply "yes" or provide the correct column names.)'
+            "(Reply 'yes' to confirm or provide the correct column names in the format 'Entity ID Column: <column_name>, Target Column: <column_name>')"
         )
         return schema_text
 
-
-    def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str):
+    def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str, file_size_mb: float):
         """
         Dynamically updates or creates an AWS Glue table based on the uploaded file's schema.
         """
         glue = get_glue_client()
-        s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+        # s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/"
+        unique_id = file_key.split('/')[1]  # Assuming file_key is "uploads/{unique_id}/{s3_file_name}"
+        s3_location = f"s3://{AWS_STORAGE_BUCKET_NAME}/uploads/{unique_id}/"  # Ensure it matches the upload path
+        table_name_without_extension = os.path.splitext(table_name)[0]  # Remove .csv
         storage_descriptor = {
             'Columns': [{"Name": col['column_name'], "Type": col['data_type']} for col in schema],
             'Location': s3_location,
@@ -509,27 +6553,261 @@ class UnifiedChatGPTAPI(APIView):
         }
         try:
             glue.update_table(
-                DatabaseName='pa_user_datafiles_db',
+                DatabaseName=ATHENA_SCHEMA_NAME,
                 TableInput={
-                    'Name': table_name,
+                    'Name': table_name_without_extension,
                     'StorageDescriptor': storage_descriptor,
                     'TableType': 'EXTERNAL_TABLE'
                 }
             )
-            print(f"Glue table '{table_name}' updated successfully.")
+            print(f"[DEBUG] Glue table '{table_name_without_extension}' updated successfully.")  # Debugging statement
         except glue.exceptions.EntityNotFoundException:
-            print(f"Table '{table_name}' not found. Creating a new table...")
+            print(f"[DEBUG] Table '{table_name_without_extension}' not found. Creating a new table...")  # Debugging statement
             glue.create_table(
-                DatabaseName='pa_user_datafiles_db',
+                DatabaseName=ATHENA_SCHEMA_NAME,
                 TableInput={
-                    'Name': table_name,
+                    'Name': table_name_without_extension,
                     'StorageDescriptor': storage_descriptor,
                     'TableType': 'EXTERNAL_TABLE'
                 }
             )
-            print(f"Glue table '{table_name}' created successfully.")
+            print(f"[DEBUG] Glue table '{table_name_without_extension}' created successfully.")  # Debugging statement
         except Exception as e:
-            print(f"Glue operation failed: {str(e)}")
+            print(f"[ERROR] Glue operation failed: {str(e)}")  # Debugging statement
+
+        # Calculate dynamic timeout based on file size
+        base_timeout = 80  # Base timeout in seconds
+        additional_timeout_per_mb = 5  # Additional timeout per MB in seconds
+        dynamic_timeout = base_timeout + (file_size_mb * additional_timeout_per_mb)
+        print(f"[DEBUG] Dynamic timeout for table creation: {dynamic_timeout} seconds")
+
+        # Wait for the table to be created
+        self.wait_for_table_creation(table_name_without_extension, timeout=dynamic_timeout)
+
+    def sanitize_identifier(self, name):
+        """
+        Replace any character that is not a letter, number, or underscore with an underscore.
+        """
+        return re.sub(r'\W+', '_', name.lower())
+
+    def validate_column_exists(self, column_name, columns_list):
+        """
+        Checks if a column exists in the provided list of columns.
+        """
+        if column_name not in columns_list:
+            print(f"[ERROR] Column '{column_name}' does not exist in the dataset.")
+            return False
+        return True
+
+    def sanitize_notebook(self, nb):
+        """
+        Recursively sanitize the notebook object to replace NaN and Infinity values.
+        """
+        import numpy as np
+        if isinstance(nb, dict):
+            return {k: self.sanitize_notebook(v) for k, v in nb.items()}
+        elif isinstance(nb, list):
+            return [self.sanitize_notebook(v) for v in nb]
+        elif isinstance(nb, float):
+            if np.isnan(nb) or np.isinf(nb):
+                return None
+            else:
+                return nb
+        else:
+            return nb
+
+    def generate_notebook(self, request):
+        """
+        Generates notebooks with pre-filled SQL queries and executed results.
+        """
+        user_id = request.data.get("user_id", "default_user")
+        print(f"[DEBUG] Generating notebook for user: {user_id}")
+
+        if user_id not in user_confirmations:
+            return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+        confirmation = user_confirmations[user_id]
+        entity_id_column = confirmation['entity_id_column']
+        target_column = confirmation['target_column']
+        feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+        # Get the table name from the uploaded file info
+        if user_id in user_schemas:
+            uploaded_file_info = user_schemas[user_id][0]
+            table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
+            table_name = self.sanitize_identifier(table_name_raw)
+        else:
+            return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the list of columns from the schema
+        columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
+
+        # Validate entity_id_column and target_column
+        if not self.validate_column_exists(entity_id_column, columns_list):
+            return Response({"error": f"Entity ID column '{entity_id_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not self.validate_column_exists(target_column, columns_list):
+            return Response({"error": f"Target column '{target_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+        
+       
+
+        # Create notebooks with SQL queries and executed results
+        notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, table_name, columns_list)
+        notebook_features = self.create_features_notebook(feature_columns, table_name, columns_list)
+
+        # Sanitize notebooks to replace NaN and Infinity values
+        notebook_entity_target_sanitized = self.sanitize_notebook(notebook_entity_target)
+        notebook_features_sanitized = self.sanitize_notebook(notebook_features)
+
+        # Store notebooks in user_notebooks dictionary
+        user_notebooks[user_id] = {
+            'entity_target_notebook': notebook_entity_target_sanitized,
+            'features_notebook': notebook_features_sanitized
+        }
+
+        print("[DEBUG] Notebooks generated and stored successfully.")  # Debugging statement
+
+        return Response({
+            "message": "Notebooks generated successfully.",
+            "notebooks": user_notebooks[user_id]
+        }, status=status.HTTP_200_OK)
+
+    def create_entity_target_notebook(self, entity_id_column, target_column, table_name, columns_list):
+        """
+        Creates a notebook for Entity ID and Target analysis with SQL queries and executed results.
+        """
+        nb = new_notebook()
+        cells = []
+
+        # Introduction cell
+        cells.append(new_markdown_cell("# Entity ID and Target Analysis Notebook"))
+
+        # Sanitize columns
+        sanitized_entity_id_column = self.sanitize_identifier(entity_id_column)
+        sanitized_target_column = self.sanitize_identifier(target_column)
+
+        # SQL query cell
+        sql_query_entity_target = f"SELECT {sanitized_entity_id_column}, {sanitized_target_column} FROM {table_name} LIMIT 10;"
+
+        # Execute the query and get results
+        df_result = execute_sql_query(sql_query_entity_target)
+        if df_result.empty:
+            error_message = f"No data returned for query: {sql_query_entity_target}"
+            print(f"[ERROR] {error_message}")
+            cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+        else:
+            print(f"[DEBUG] DataFrame shape: {df_result.shape}")
+            print(f"[DEBUG] DataFrame head:\n{df_result.head()}")
+
+            # Replace NaN and Inf values with None
+            df_result = df_result.replace([np.nan, np.inf, -np.inf], None)
+
+            result_json = df_result.to_dict(orient='records')
+
+            # Add the SQL query to the cell
+            code_cell = new_code_cell(sql_query_entity_target)
+
+            # Attach the result to the code cell's outputs using new_output
+            code_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={
+                        'application/json': result_json
+                    },
+                    metadata={},
+                    execution_count=None
+                )
+            ]
+
+            cells.append(code_cell)
+
+        nb['cells'] = cells
+
+        return nb
+
+
+    def create_features_notebook(self, feature_columns, table_name, columns_list):
+        """
+        Creates a notebook for Features analysis by querying all features in a single shell.
+        """
+        nb = new_notebook()
+        cells = []
+
+        # Introduction cell
+        cells.append(new_markdown_cell("# Features Analysis Notebook"))
+
+        # Sanitize feature column names
+        sanitized_features = [self.sanitize_identifier(feature) for feature in feature_columns]
+
+        # Validate that all columns exist
+        missing_columns = [feature for feature in sanitized_features if feature not in columns_list]
+        if missing_columns:
+            error_message = f"The following feature columns do not exist in the dataset: {', '.join(missing_columns)}"
+            print(f"[ERROR] {error_message}")
+            cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+            nb['cells'] = cells
+            return nb
+
+        # Create a single SQL query for all features with line-by-line formatting
+        feature_query = (
+            "SELECT\n    " + ",\n    ".join(sanitized_features) + f"\nFROM {table_name}\nLIMIT 10;"
+        )
+        print(f"[DEBUG] Executing SQL query for features:\n{feature_query}")
+
+        # Execute the query and get results
+        df_result = execute_sql_query(feature_query)
+        if df_result.empty:
+            error_message = f"No data returned for query: {feature_query}"
+            print(f"[ERROR] {error_message}")
+            cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+        else:
+            print(f"[DEBUG] DataFrame shape: {df_result.shape}")
+            print(f"[DEBUG] DataFrame head:\n{df_result.head()}")
+
+            # Replace NaN and Inf values with None
+            df_result = df_result.replace([np.nan, np.inf, -np.inf], None)
+
+            result_json = df_result.to_dict(orient='records')
+
+            # Add the SQL query to the cell
+            code_cell = new_code_cell(feature_query)
+
+            # Attach the result to the code cell's outputs using new_output
+            code_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={
+                        'application/json': result_json
+                    },
+                    metadata={},
+                    execution_count=None
+                )
+            ]
+
+            cells.append(code_cell)
+
+        nb['cells'] = cells
+
+        return nb
 
 
 
+    def wait_for_table_creation(self, table_name, timeout):
+        """
+        Waits for the AWS Glue table to be created within the specified timeout.
+        """
+        import time
+        glue_client = get_glue_client()
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                glue_client.get_table(DatabaseName=ATHENA_SCHEMA_NAME, Name=table_name)
+                print(f"[DEBUG] Glue table '{table_name}' is now available.")
+                return True
+            except glue_client.exceptions.EntityNotFoundException:
+                time.sleep(20)
+            except Exception as e:
+                print(f"[ERROR] Unexpected error while checking table availability: {str(e)}")
+                return False
+        print(f"[ERROR] Glue table '{table_name}' did not become available within {timeout} seconds.")
+        return False

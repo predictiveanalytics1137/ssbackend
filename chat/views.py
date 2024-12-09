@@ -7597,6 +7597,7 @@ class UnifiedChatGPTAPI(APIView):
             uploaded_file_info = user_schemas[user_id][0]
             table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
             sanitized_table_name = self.sanitize_identifier(table_name_raw)
+            file_url = uploaded_file_info.get('file_url')  # Ensure we have the full S3 URL
         else:
             print("[ERROR] Uploaded file info not found.")
             return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
@@ -7609,31 +7610,7 @@ class UnifiedChatGPTAPI(APIView):
         if not self.validate_column_exists(target_column, columns_list):
             return Response({"error": f"Target column '{target_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
 
-        print("[DEBUG] Entity ID Column:", entity_id_column)
-        print("[DEBUG] Target Column:", target_column)
-        print("[DEBUG] Feature Columns:", feature_columns)
-        print("[DEBUG] Glue Table Name:", sanitized_table_name)
-
-        # Pass data to DataForAutomationAPI
-        automation_api_url = "http://localhost:8000/api/automation/"
-        automation_payload = {
-            "entity_column": entity_id_column,
-            "target_column": target_column,
-            "features": feature_columns,
-            "glue_table_name": sanitized_table_name,
-        }
-
-        print("[DEBUG] Automation API Payload:", automation_payload)
-
-        try:
-            automation_response = requests.post(automation_api_url, json=automation_payload)
-            print("[DEBUG] Automation API Response:", automation_response.json())
-            if automation_response.status_code != 200:
-                return Response({"error": "Failed to pass data to automation API.", "details": automation_response.json()}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        except Exception as e:
-            print("[ERROR] Failed to call Automation API:", str(e))
-            return Response({"error": "Failed to call Automation API.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        # Generate notebooks (as before)
         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, sanitized_table_name, columns_list)
         notebook_features = self.create_features_notebook(feature_columns, sanitized_table_name, columns_list)
 
@@ -7649,8 +7626,31 @@ class UnifiedChatGPTAPI(APIView):
         }
 
         print("[DEBUG] Notebooks generated successfully for user:", user_id)
+        print("[DEBUG] Sending data to DataForAutomationAPI...")
+
+        # Prepare payload for DataForAutomationAPI
+        payload = {
+            "file_url": file_url,
+            "entity_column": entity_id_column,
+            "target_column": target_column,
+            "features": feature_columns
+        }
+
+        AUTOMATION_API_URL = "http://localhost:8000/api/automation/"  # Adjust as needed
+
+        try:
+            print("[DEBUG] POSTing to DataForAutomationAPI:", payload)
+            automation_response = requests.post(AUTOMATION_API_URL, json=payload)
+            print("[DEBUG] DataForAutomationAPI Response Code:", automation_response.status_code)
+            print("[DEBUG] DataForAutomationAPI Response:", automation_response.json())
+            if automation_response.status_code != 200:
+                return Response({"error": "Failed to pass data to DataForAutomationAPI.", "details": automation_response.json()}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            print("[ERROR] Failed to call DataForAutomationAPI:", str(e))
+            return Response({"error": "Failed to call DataForAutomationAPI.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         return Response({
-            "message": "Notebooks generated successfully.",
+            "message": "Notebooks generated and data passed to DataForAutomationAPI successfully.",
             "notebooks": user_notebooks[user_id]
         }, status=status.HTTP_200_OK)
 

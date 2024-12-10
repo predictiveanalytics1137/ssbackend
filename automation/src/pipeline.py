@@ -23,14 +23,16 @@ from src.utils import automatic_imputation  # Import from utils
 
 
 
-def train_pipeline(csv_path, target_column):
+def train_pipeline(df, target_column):
     """
     Complete machine learning pipeline with direct S3 upload for artifacts.
     """
     try:
         # Load dataset
-        logger.info(f"Loading dataset from {csv_path}...")
-        df = pd.read_csv(csv_path)
+        # logger.info(f"Loading dataset from {csv_path}...")
+        # df = pd.read_csv(csv_path)
+        logger.info("Dataset received successfully.")
+        logger.info(f"Dataset shape: {df.shape}")
         logger.info(f"Dataset loaded successfully. Shape: {df.shape}")
 
         # Handle Missing Values, Encoding, Feature Engineering
@@ -143,7 +145,7 @@ def load_from_s3(bucket_name, s3_key):
 
 
 
-def predict_new_data(new_csv_path, bucket_name="artifacts1137"):
+def predict_new_data(new_data, bucket_name="artifacts1137"):
     """
     Loads the trained model and saved preprocessing artifacts to predict on new data.
     
@@ -180,8 +182,8 @@ def predict_new_data(new_csv_path, bucket_name="artifacts1137"):
 
 
         # Load new data
-        logger.info(f"Loading and preprocessing new data from {new_csv_path}...")
-        new_data = pd.read_csv(new_csv_path)
+        # logger.info(f"Loading and preprocessing new data from {new_csv_path}...")
+        # new_data = pd.read_csv(new_csv_path)
 
         # Apply imputation and encoding to new data
         logger.info("Applying imputation and encoding to new data...")

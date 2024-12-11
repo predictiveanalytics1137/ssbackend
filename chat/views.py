@@ -6834,8 +6834,7 @@ from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from langchain.chains import ConversationChain
-from langchain.chat_models import ChatOpenAI
-# from langchain_community.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import AIMessage

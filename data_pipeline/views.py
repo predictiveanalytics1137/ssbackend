@@ -369,11 +369,6 @@ import os
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-import subprocess
-import os
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
 import re
 
 # from automation.scripts import predict

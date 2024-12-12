@@ -16,8 +16,13 @@
 
 
 from django.urls import path
-from .views import UnifiedChatGPTAPI
+from .views import ChatListView, MessageListView, UnifiedChatGPTAPI
 
 urlpatterns = [
     path('chatgpt/', UnifiedChatGPTAPI.as_view(), name='chatgpt_chat'),  # ChatGPT-related endpoint
+    # path('chats/', ChatListView.as_view(), name='chat_list'),
+    # path('chats/<uuid:chat_id>/messages/', MessageListView.as_view(), name='message_list'),
+    path('chats/', ChatListView.as_view(), name='chat-list'),
 ]
+
+

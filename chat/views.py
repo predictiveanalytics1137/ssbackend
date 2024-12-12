@@ -7818,3 +7818,83 @@ class UnifiedChatGPTAPI(APIView):
             return False
 
         return True
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from .models import Chat, Message
+from .serializers import ChatSerializer, MessageSerializer
+
+# class ChatListView(APIView):
+#     permission_classes = [permissions.IsAuthenticated]
+
+#     def get(self, request):
+#         chats = Chat.objects.filter(user=request.user)
+#         serializer = ChatSerializer(chats, many=True)
+#         return Response(serializer.data)
+
+#     def post(self, request):
+#         chat = Chat.objects.create(user=request.user, title=request.data.get('title', 'New Chat'))
+#         serializer = ChatSerializer(chat)
+#         return Response(serializer.data, status=status.HTTP_201_CREATED)
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .models import Chat, Message
+from .serializers import ChatSerializer, MessageSerializer
+
+class ChatListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        chats = Chat.objects.filter(user=request.user)
+        serializer = ChatSerializer(chats, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        data = request.data
+        chat = Chat.objects.create(user=request.user, title=data.get('title'))
+        return Response({'chat_id': chat.chat_id})
+
+    
+    
+
+class MessageListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, chat_id):
+        try:
+            chat = Chat.objects.get(id=chat_id, user=request.user)
+        except Chat.DoesNotExist:
+            return Response({'error': 'Chat not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        message = Message.objects.create(
+            chat=chat,
+            sender=request.data.get('sender'),
+            text=request.data.get('text')
+        )
+        serializer = MessageSerializer(message)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

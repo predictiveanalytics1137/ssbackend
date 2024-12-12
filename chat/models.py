@@ -1,5 +1,6 @@
 
 
+import uuid
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.conf import settings
@@ -62,3 +63,25 @@ class FileSchema(models.Model):
         String representation of the schema, showing file name and created date.
         """
         return f"Schema for {self.file.name} (Created: {self.created_at.strftime('%Y-%m-%d %H:%M:%S')})"
+
+
+
+
+
+
+
+
+from django.db import models
+from django.contrib.auth.models import User
+
+class Chat(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    chat_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    title = models.CharField(max_length=255)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+class Message(models.Model):
+    chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name='messages')
+    sender = models.CharField(max_length=50)  # 'user' or 'assistant'
+    text = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)

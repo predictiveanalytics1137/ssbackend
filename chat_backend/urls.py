@@ -37,4 +37,5 @@ urlpatterns = [
     path('api/', include('data_pipeline.urls')),  # Data pipeline endpoints
     path('api/', include('chat.urls')),  # Chat endpoints
     path('model/', include('result.urls')),
+    path('api/auth/', include('accounts.urls')),
 ]

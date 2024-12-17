@@ -578,52 +578,147 @@ from rest_framework import status
 import re
 
 
+# class DataForAutomationAPI(APIView):
+#     """
+#     Endpoint: /api/data-for-automation/
+#     Modified to start the train_pipeline.py script with file_url and target_column.
+#     """
+
+#     def post(self, request):
+#         print("[DEBUG] DataForAutomationAPI: Received POST request.")
+#         print("[DEBUG] Request data:", request.data)
+
+#         # Extract data from the request
+#         file_url = request.data.get("file_url")
+#         target_column = request.data.get("target_column")
+#         print(f"[DEBUG] Extracted file_url: {file_url}, target_column: {target_column}")
+
+#         # Validate request data
+#         if not file_url or not target_column:
+#             print("[ERROR] Missing required data:", {
+#                 "file_url": file_url,
+#                 "target_column": target_column,
+#             })
+#             return Response(
+#                 {"error": "Missing required data: file_url, target_column"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             # Full path to the train_pipeline.py script
+#             script_path = r"D:\backend-ss\ssbackend\automation\scripts\train_pipeline.py"
+#             print(f"[DEBUG] Script path: {script_path}")
+
+#             # Construct the command to run train_pipeline.py
+#             command = [
+#                 "python", 
+#                 script_path, 
+#                 "--file_url", file_url, 
+#                 "--target_column", target_column
+#             ]
+#             print(f"[DEBUG] Constructed command: {' '.join(command)}")
+
+#             # Run the command and capture the output
+#             print("[DEBUG] Starting subprocess to run train_pipeline.py...")
+#             process = subprocess.run(
+#                 command, 
+#                 text=True, 
+#                 stdout=subprocess.PIPE, 
+#                 stderr=subprocess.PIPE
+#             )
+#             print(f"[DEBUG] Subprocess finished with return code: {process.returncode}")
+
+#             if process.returncode != 0:
+#                 print("[ERROR] train_pipeline.py failed:")
+#                 print(process.stderr)
+#                 return Response(
+#                     {
+#                         "error": "Failed to execute train_pipeline.py",
+#                         "details": process.stderr,
+#                     },
+#                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#                 )
+
+#             print("[DEBUG] train_pipeline.py succeeded. Output:")
+#             print(process.stdout)
+#             return Response(
+#                 {
+#                     "message": "Training completed successfully.",
+#                     "details": process.stdout,
+#                 },
+#                 status=status.HTTP_200_OK,
+#             )
+
+#         except Exception as e:
+#             print("[ERROR] Exception occurred while running train_pipeline.py:")
+#             print(str(e))
+#             return Response(
+#                 {"error": f"An error occurred: {str(e)}"},
+#                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             )
+
+# Below implementation included user_id and chat_id
+
+
+# data_pipeline/views.py
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+import subprocess
+import os
+import json
+
 class DataForAutomationAPI(APIView):
     """
     Endpoint: /api/data-for-automation/
-    Modified to start the train_pipeline.py script with file_url and target_column.
+    Runs the train_pipeline.py script with file_url, target_column, user_id, and chat_id.
     """
 
     def post(self, request):
         print("[DEBUG] DataForAutomationAPI: Received POST request.")
-        print("[DEBUG] Request data:", request.data)
+        data = request.data
+        file_url = data.get("file_url")
+        target_column = data.get("target_column")
+        user_id = data.get("user_id")  # now we expect user_id from frontend
+        chat_id = data.get("chat_id")  # now we expect chat_id from frontend
 
-        # Extract data from the request
-        file_url = request.data.get("file_url")
-        target_column = request.data.get("target_column")
-        print(f"[DEBUG] Extracted file_url: {file_url}, target_column: {target_column}")
+        print(f"[DEBUG] Extracted file_url: {file_url}, target_column: {target_column}, user_id: {user_id}, chat_id: {chat_id}")
 
         # Validate request data
-        if not file_url or not target_column:
+        if not file_url or not target_column or not user_id or not chat_id:
             print("[ERROR] Missing required data:", {
                 "file_url": file_url,
                 "target_column": target_column,
+                "user_id": user_id,
+                "chat_id": chat_id,
             })
             return Response(
-                {"error": "Missing required data: file_url, target_column"},
+                {"error": "Missing required data: file_url, target_column, user_id, chat_id"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             # Full path to the train_pipeline.py script
-            script_path = r"C:\Predictive Analysis\New Backend\ssbackend\automation\scripts\train_pipeline.py"
+            script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\train_pipeline.py"
             print(f"[DEBUG] Script path: {script_path}")
 
             # Construct the command to run train_pipeline.py
             command = [
-                "python", 
-                script_path, 
-                "--file_url", file_url, 
-                "--target_column", target_column
+                "python",
+                script_path,
+                "--file_url", file_url,
+                "--target_column", target_column,
+                "--user_id", str(user_id),
+                "--chat_id", str(chat_id),
             ]
             print(f"[DEBUG] Constructed command: {' '.join(command)}")
 
             # Run the command and capture the output
             print("[DEBUG] Starting subprocess to run train_pipeline.py...")
             process = subprocess.run(
-                command, 
-                text=True, 
-                stdout=subprocess.PIPE, 
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
             print(f"[DEBUG] Subprocess finished with return code: {process.returncode}")
@@ -693,7 +788,7 @@ class PredictDataAPI(APIView):
 
         try:
             # Full path to the predict.py script
-            script_path = r"C:\Predictive Analysis\New Backend\ssbackend\automation\scripts\predict.py"
+            script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\predict.py"
             print(f"[DEBUG] Script path: {script_path}")
 
             # Construct the command to run predict.py

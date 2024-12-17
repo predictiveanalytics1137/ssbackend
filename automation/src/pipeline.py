@@ -23,14 +23,126 @@ from src.utils import automatic_imputation  # Import from utils
 
 
 
-def train_pipeline(df, target_column):
+# def train_pipeline(df, target_column):
+#     """
+#     Complete machine learning pipeline with direct S3 upload for artifacts.
+#     """
+#     try:
+#         # Load dataset
+#         # logger.info(f"Loading dataset from {csv_path}...")
+#         # df = pd.read_csv(csv_path)
+#         logger.info("Dataset received successfully.")
+#         logger.info(f"Dataset shape: {df.shape}")
+#         logger.info(f"Dataset loaded successfully. Shape: {df.shape}")
+
+#         # Handle Missing Values, Encoding, Feature Engineering
+#         logger.info("Starting missing value imputation...")
+#         df, imputers = automatic_imputation(df, target_column=target_column)
+#         logger.info("Handling categorical features...")
+#         df_encoded, encoder = handle_categorical_features(df, cardinality_threshold=3)
+#         saved_column_names = df_encoded.columns.tolist()
+        
+
+#         logger.info("Performing feature engineering...")
+#         # df_engineered, feature_defs = feature_engineering(df_encoded, target_column=target_column, training=True)
+#         df_engineered, feature_defs = feature_engineering(df_encoded, target_column=target_column, training=True)
+#         df_engineered = normalize_column_names(df_engineered)
+#         logger.info("Feature engineering complete.")
+
+#         # Perform feature selection
+#         logger.info("Performing feature selection...")
+#         df_selected, selected_features = feature_selection(df_engineered, target_column=target_column, task="regression")
+#         print(selected_features)
+#         print("selected_features")
+
+#         # Split data
+#         logger.info("Splitting data into training and testing sets...")
+#         best_model_name, X_train, y_train, X_test, y_test = train_test_model_selection(
+#             df_selected, target_column=target_column, task='regression'
+#         )
+
+#         # Hyperparameter Tuning
+#         logger.info(f"Performing hyperparameter tuning for the best model: {best_model_name}...")
+#         best_model, best_params = hyperparameter_tuning(
+#             best_model_name=best_model_name, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, task='regression'
+#         )
+
+#         # Finalize and Save Model
+#         logger.info("Finalizing and evaluating the model...")
+#         final_metrics = finalize_and_evaluate_model(
+#             best_model.__class__, best_params, X_train, y_train, X_test, y_test
+#         )
+
+#         # Define S3 bucket and prefix
+#         # bucket_name = settings.AWS_STORAGE_BUCKET_NAME  # Replace with your bucket name
+#         bucket_name = "artifacts1137"
+#         prefix = "ml-artifacts/"  # Folder/prefix in S3 for storing artifacts
+
+#         # Save artifacts to S3 directly
+#         logger.info("Uploading artifacts directly to S3...")
+
+#         # Function to serialize and upload joblib files to S3
+#         def save_to_s3(obj, filename):
+#             with io.BytesIO() as f:
+#                 joblib.dump(obj, f)
+#                 f.seek(0)
+#                 s3_key = f"{prefix}{filename}"
+#                 upload_to_s3(f, bucket_name, s3_key)
+#                 logger.info(f"Uploaded {filename} to S3 as {s3_key}")
+
+#         # Save and upload artifacts
+#         save_to_s3(best_model, 'best_model.joblib')
+#         save_to_s3(imputers, 'imputers.joblib')
+#         save_to_s3(encoder, 'encoder.joblib')
+#         # save_to_s3(list(X_train.columns), 'saved_feature_names.joblib')
+#         save_to_s3(feature_defs, 'feature_defs.joblib')
+#         save_to_s3(selected_features, 'selected_features.pkl')
+#         if target_column in saved_column_names:
+#            saved_column_names.remove(target_column)
+#            save_to_s3(saved_column_names, 'saved_column_names.pkl')
+#            logger.info("Categorical feature encoding complete.")
+            
+
+#         logger.info("Artifacts uploaded to S3 successfully.")
+#         return final_metrics
+
+#     except Exception as e:
+#         logger.error(f"Error during pipeline execution: {e}")
+#         raise
+
+
+
+# logger = get_logger(__name__)
+
+
+
+
+
+# automation/src/pipeline.py
+import io
+import os
+import joblib
+import numpy as np
+import pandas as pd
+from src.s3_operations import get_s3_client, upload_to_s3
+from src.data_preprocessing import handle_categorical_features
+from src.finalization import finalize_and_evaluate_model
+from src.model_selection import train_test_model_selection
+from src.hyperparameter_tuning import hyperparameter_tuning
+from src.utils import automatic_imputation
+from src.feature_engineering import feature_engineering
+from src.logging_config import get_logger
+from src.helper import normalize_column_names
+from src.feature_selection import feature_selection
+
+logger = get_logger(__name__)
+
+def train_pipeline(df, target_column, user_id, chat_id):
     """
     Complete machine learning pipeline with direct S3 upload for artifacts.
+    Includes user_id and chat_id to maintain uniqueness.
     """
     try:
-        # Load dataset
-        # logger.info(f"Loading dataset from {csv_path}...")
-        # df = pd.read_csv(csv_path)
         logger.info("Dataset received successfully.")
         logger.info(f"Dataset shape: {df.shape}")
         logger.info(f"Dataset loaded successfully. Shape: {df.shape}")
@@ -41,10 +153,8 @@ def train_pipeline(df, target_column):
         logger.info("Handling categorical features...")
         df_encoded, encoder = handle_categorical_features(df, cardinality_threshold=3)
         saved_column_names = df_encoded.columns.tolist()
-        
 
         logger.info("Performing feature engineering...")
-        # df_engineered, feature_defs = feature_engineering(df_encoded, target_column=target_column, training=True)
         df_engineered, feature_defs = feature_engineering(df_encoded, target_column=target_column, training=True)
         df_engineered = normalize_column_names(df_engineered)
         logger.info("Feature engineering complete.")
@@ -67,21 +177,18 @@ def train_pipeline(df, target_column):
             best_model_name=best_model_name, X_train=X_train, y_train=y_train, X_test=X_test, y_test=y_test, task='regression'
         )
 
-        # Finalize and Save Model
+        # Finalize and Save Model (now pass user_id and chat_id)
         logger.info("Finalizing and evaluating the model...")
         final_metrics = finalize_and_evaluate_model(
-            best_model.__class__, best_params, X_train, y_train, X_test, y_test
+            best_model.__class__, best_params, X_train, y_train, X_test, y_test,
+            user_id=user_id, chat_id=chat_id  # Pass them here
         )
 
-        # Define S3 bucket and prefix
-        # bucket_name = settings.AWS_STORAGE_BUCKET_NAME  # Replace with your bucket name
-        bucket_name = "artifacts1137"
-        prefix = "ml-artifacts/"  # Folder/prefix in S3 for storing artifacts
-
-        # Save artifacts to S3 directly
+        # Upload artifacts to S3
         logger.info("Uploading artifacts directly to S3...")
+        bucket_name = "artifacts1137"
+        prefix = "ml-artifacts/"
 
-        # Function to serialize and upload joblib files to S3
         def save_to_s3(obj, filename):
             with io.BytesIO() as f:
                 joblib.dump(obj, f)
@@ -90,29 +197,23 @@ def train_pipeline(df, target_column):
                 upload_to_s3(f, bucket_name, s3_key)
                 logger.info(f"Uploaded {filename} to S3 as {s3_key}")
 
-        # Save and upload artifacts
         save_to_s3(best_model, 'best_model.joblib')
         save_to_s3(imputers, 'imputers.joblib')
         save_to_s3(encoder, 'encoder.joblib')
-        # save_to_s3(list(X_train.columns), 'saved_feature_names.joblib')
         save_to_s3(feature_defs, 'feature_defs.joblib')
         save_to_s3(selected_features, 'selected_features.pkl')
         if target_column in saved_column_names:
-           saved_column_names.remove(target_column)
-           save_to_s3(saved_column_names, 'saved_column_names.pkl')
-           logger.info("Categorical feature encoding complete.")
-            
+            saved_column_names.remove(target_column)
+            save_to_s3(saved_column_names, 'saved_column_names.pkl')
+            logger.info("Categorical feature encoding complete.")
 
         logger.info("Artifacts uploaded to S3 successfully.")
-        return final_metrics
+        return best_model, best_params
 
     except Exception as e:
         logger.error(f"Error during pipeline execution: {e}")
         raise
 
-
-
-logger = get_logger(__name__)
 
 
 
@@ -138,6 +239,7 @@ def load_from_s3(bucket_name, s3_key):
         else:
             logger.error(f"Error accessing {s3_key} in bucket {bucket_name}: {e}")
             raise
+
 
 
 

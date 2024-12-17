@@ -8119,8 +8119,9 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import AIMessage
 
-from .models import FileSchema, UploadedFile, Chat, Message, ChatBackup
-from .serializers import UploadedFileSerializer, ChatSerializer, MessageSerializer
+from .models import FileSchema, UploadedFile, ChatBackup
+# from .serializers import UploadedFileSerializer, ChatSerializer, MessageSerializer
+from .serializers import UploadedFileSerializer
 
 # AWS and OpenAI environment variables
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
@@ -8972,39 +8973,39 @@ class UnifiedChatGPTAPI(APIView):
 
 
 # ChatListView and MessageListView as provided earlier, unchanged except for comments:
-class ChatListView(APIView):
-    permission_classes = [IsAuthenticated]
+# class ChatListView(APIView):
+#     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        # Get chats for the authenticated user
-        chats = Chat.objects.filter(user=request.user)
-        serializer = ChatSerializer(chats, many=True)
-        return Response(serializer.data)
+#     def get(self, request):
+#         # Get chats for the authenticated user
+#         chats = Chat.objects.filter(user=request.user)
+#         serializer = ChatSerializer(chats, many=True)
+#         return Response(serializer.data)
 
-    def post(self, request):
-        # Create a new chat for the authenticated user
-        data = request.data
-        chat = Chat.objects.create(user=request.user, title=data.get('title'))
-        return Response({'chat_id': chat.chat_id})
+#     def post(self, request):
+#         # Create a new chat for the authenticated user
+#         data = request.data
+#         chat = Chat.objects.create(user=request.user, title=data.get('title'))
+#         return Response({'chat_id': chat.chat_id})
 
 
-class MessageListView(APIView):
-    permission_classes = [IsAuthenticated]
+# class MessageListView(APIView):
+#     permission_classes = [IsAuthenticated]
 
-    def post(self, request, chat_id):
-        # Create a new message in the specified chat for the authenticated user
-        try:
-            chat = Chat.objects.get(id=chat_id, user=request.user)
-        except Chat.DoesNotExist:
-            return Response({'error': 'Chat not found'}, status=status.HTTP_404_NOT_FOUND)
+#     def post(self, request, chat_id):
+#         # Create a new message in the specified chat for the authenticated user
+#         try:
+#             chat = Chat.objects.get(id=chat_id, user=request.user)
+#         except Chat.DoesNotExist:
+#             return Response({'error': 'Chat not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        message = Message.objects.create(
-            chat=chat,
-            sender=request.data.get('sender'),
-            text=request.data.get('text')
-        )
-        serializer = MessageSerializer(message)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+#         message = Message.objects.create(
+#             chat=chat,
+#             sender=request.data.get('sender'),
+#             text=request.data.get('text')
+#         )
+#         serializer = MessageSerializer(message)
+#         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class ChatHistoryByUserView(APIView):

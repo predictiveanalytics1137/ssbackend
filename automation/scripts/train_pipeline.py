@@ -107,6 +107,8 @@ def fetch_csv_from_s3(s3_path):
         raise
 
 
+
+
 if __name__ == "__main__":
     print("[DEBUG] Starting script execution...")
 
@@ -114,8 +116,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the train pipeline.")
     parser.add_argument("--file_url", required=True, help="S3 file URL for the CSV data.")
     parser.add_argument("--target_column", required=True, help="Target column for training.")
+    parser.add_argument("--user_id", required=True, help="User ID for this training session.")
+    parser.add_argument("--chat_id", required=True, help="Chat ID for this training session.")
     args = parser.parse_args()
-    print(f"[DEBUG] Arguments received - file_url: {args.file_url}, target_column: {args.target_column}")
+    print(f"[DEBUG] Arguments received - file_url: {args.file_url}, target_column: {args.target_column}, user_id: {args.user_id}, chat_id: {args.chat_id}")
 
     try:
         # Fetch data from S3
@@ -124,9 +128,9 @@ if __name__ == "__main__":
         print("[DEBUG] Data fetched successfully from S3. Here's a preview:")
         print(data.head())
 
-        # Train the pipeline
+        # Train the pipeline with user_id and chat_id
         print("[DEBUG] Starting training pipeline...")
-        best_model, best_params = train_pipeline(data, args.target_column)
+        best_model, best_params = train_pipeline(data, args.target_column, args.user_id, args.chat_id)
         print("[DEBUG] Training complete.")
         print(f"[DEBUG] Best Model: {best_model}")
         print(f"[DEBUG] Best Parameters: {best_params}")
@@ -135,3 +139,35 @@ if __name__ == "__main__":
         sys.exit(1)
 
     print("[DEBUG] Script execution completed successfully.")
+
+# if __name__ == "__main__":
+#     print("[DEBUG] Starting script execution...")
+
+#     # Parse arguments
+#     parser = argparse.ArgumentParser(description="Run the train pipeline.")
+#     parser.add_argument("--file_url", required=True, help="S3 file URL for the CSV data.")
+#     parser.add_argument("--target_column", required=True, help="Target column for training.")
+#     args = parser.parse_args()
+#     print(f"[DEBUG] Arguments received - file_url: {args.file_url}, target_column: {args.target_column}")
+
+#     try:
+#         # Fetch data from S3
+#         print("[DEBUG] Fetching data from S3...")
+#         data = fetch_csv_from_s3(args.file_url)
+#         print("[DEBUG] Data fetched successfully from S3. Here's a preview:")
+#         print(data.head())
+
+#         # Train the pipeline
+#         print("[DEBUG] Starting training pipeline...")
+#         best_model, best_params = train_pipeline(data, args.target_column)
+#         print("[DEBUG] Training complete.")
+#         print(f"[DEBUG] Best Model: {best_model}")
+#         print(f"[DEBUG] Best Parameters: {best_params}")
+#     except Exception as e:
+#         print(f"[ERROR] An error occurred during execution: {str(e)}")
+#         sys.exit(1)
+
+#     print("[DEBUG] Script execution completed successfully.")
+
+
+

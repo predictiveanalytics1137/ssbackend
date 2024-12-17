@@ -73,6 +73,7 @@ class FileSchema(models.Model):
 
 from django.db import models
 from django.contrib.auth.models import User
+import uuid
 
 class Chat(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -85,3 +86,29 @@ class Message(models.Model):
     sender = models.CharField(max_length=50)  # 'user' or 'assistant'
     text = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
+
+
+
+from django.contrib.auth.models import User
+from django.db import models
+
+class ChatBackup(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chats")  # Links to `auth_user.id`
+    chat_id = models.CharField(max_length=255, unique=True)  # Unique ID for each chat
+    title = models.CharField(max_length=255)
+    messages = models.JSONField()  # Store chat messages as JSON
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # timestamp = models.DateTimeField(auto_now_add=True)
+
+
+# Backup Chat Model
+# class ChatBackup(models.Model):
+#     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_backups")
+#     chat_id = models.UUIDField(editable=False, unique=True)  # Same chat_id as in Chat
+#     title = models.CharField(max_length=255)
+#     messages = models.JSONField()  # Store chat messages as JSON
+#     timestamp = models.DateTimeField
+
+    def __str__(self):
+        return f"{self.user.username} - {self.chat_id}"

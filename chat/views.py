@@ -8461,224 +8461,70 @@ class UnifiedChatGPTAPI(APIView):
             "chat_message": schema_discussion
         }, status=status.HTTP_201_CREATED)
 
-    # def handle_chat(self, request):
-    #     user_input = request.data.get("message", "").strip()
-    #     user_id = request.data.get("user_id", "default_user")
-    #     print(f"[DEBUG] Handling chat for user: {user_id}, user_input: {user_input}")
-
-    #     if not user_input:
-    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     if user_id not in user_conversations:
-    #         conversation_chain = ConversationChain(
-    #             llm=llm_chatgpt,
-    #             prompt=prompt_chatgpt,
-    #             input_key="user_input",
-    #             memory=ConversationBufferMemory()
-    #         )
-    #         user_conversations[user_id] = conversation_chain
-    #     else:
-    #         conversation_chain = user_conversations[user_id]
-
-    #     if user_id in user_schemas and user_id not in user_confirmations:
-    #         print("[DEBUG] User provided schema confirmation or adjustments.")
-    #         assistant_response, show_generate_notebook = self.process_schema_confirmation(user_input, user_id)
-    #         return Response({"response": assistant_response, "show_generate_notebook": show_generate_notebook})
-
-    #     assistant_response = conversation_chain.run(user_input=user_input)
-    #     conversation_chain.memory.chat_memory.messages.append(AIMessage(content=assistant_response))
-    #     print("[DEBUG] Assistant response:", assistant_response)
-    #     return Response({"response": assistant_response})
-
-    # def handle_chat(self, request):
-    #     user_input = request.data.get("message", "").strip()
-    #     user_id = request.data.get("user_id", "default_user")
-    #     # chat_id = request.data.get("chat_id", 10)
-    #     chat_id = request.data.get("chat_id")
-    #     print(chat_id)
-    #     print(f"[DEBUG] Handling chat for user: {user_id}, chat_id: {chat_id}, user_input: {user_input}")
-    #     if not user_input:
-    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-    #     if not chat_id:
-    #         return Response({"error": "No chat ID provided"}, status=status.HTTP_400_BAD_REQUEST)
-    #     try:
-    #         user = User.objects.get(id=user_id)
-    #     except User.DoesNotExist:
-    #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    #     # Initialize or fetch the conversation chain for the user
-    #     if user_id not in user_conversations:
-    #         conversation_chain = ConversationChain(
-    #             llm=llm_chatgpt,
-    #             prompt=prompt_chatgpt,
-    #             input_key="user_input",
-    #             memory=ConversationBufferMemory()
-    #         )
-    #         user_conversations[user_id] = conversation_chain
-    #     else:
-    #         conversation_chain = user_conversations[user_id]
-    #     # Check if schema confirmation is required
-    #     if user_id in user_schemas and user_id not in user_confirmations:
-    #         print("[DEBUG] User provided schema confirmation or adjustments.")
-    #         assistant_response, show_generate_notebook = self.process_schema_confirmation(user_input, user_id)
-            
-    #         # Save chat to the database
-    #         self.save_chat_to_db(user, chat_id, user_input, assistant_response)
-    #         return Response({"response": assistant_response, "show_generate_notebook": show_generate_notebook})
-    #     # Generate assistant response using the conversation chain
-    #     assistant_response = conversation_chain.run(user_input=user_input)
-    #     conversation_chain.memory.chat_memory.messages.append(AIMessage(content=assistant_response))
-    #     print("[DEBUG] Assistant response:", assistant_response)
-    #     # Save chat to the database
-    #     self.save_chat_to_db(user, chat_id, user_input, assistant_response)
-    #     return Response({"response": assistant_response})
-
-    # def handle_chat(self, request):
-    #     user_input = request.data.get("message", "").strip()
-    #     user_id = request.data.get("user_id", "default_user")
-    #     chat_id = request.data.get("chat_id")
-    #     print(f"[DEBUG] Handling chat for user: {user_id}, chat_id: {chat_id}, user_input: {user_input}")
-        
-    #     if not user_input:
-    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    #     try:
-    #         user = User.objects.get(id=user_id)
-    #     except User.DoesNotExist:
-    #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    #     # Generate a new chat_id if not provided
-    #     if not chat_id:
-    #         chat_id = str(uuid.uuid4())  # Generate a new UUID
-    #         print(f"[DEBUG] Generated new chat_id: {chat_id}")
-
-    #     # Check if chat exists in the database
-    #     chat, created = ChatBackup.objects.get_or_create(
-    #         user=user,
-    #         chat_id=chat_id,
-    #         defaults={
-    #             "title": "User Chat",
-    #             "messages": [],
-    #         }
-    #     )
-
-    #     if not created:
-    #         print(f"[DEBUG] Appending to existing chat with chat_id: {chat_id}")
-        
-    #     # Initialize or fetch the conversation chain for the user
-    #     if user_id not in user_conversations:
-    #         conversation_chain = ConversationChain(
-    #             llm=llm_chatgpt,
-    #             prompt=prompt_chatgpt,
-    #             input_key="user_input",
-    #             memory=ConversationBufferMemory()
-    #         )
-    #         user_conversations[user_id] = conversation_chain
-    #     else:
-    #         conversation_chain = user_conversations[user_id]
-        
-    #     # Generate assistant response using the conversation chain
-    #     assistant_response = conversation_chain.run(user_input=user_input)
-    #     conversation_chain.memory.chat_memory.messages.append(AIMessage(content=assistant_response))
-    #     print("[DEBUG] Assistant response:", assistant_response)
-
-    #     # Save chat to the database
-    #     self.save_chat_to_db(user, chat_id, user_input, assistant_response)
-        
-    #     return Response({"response": assistant_response, "chat_id": chat_id})
-
-
-
 
     # def handle_chat(self, request):
     #     user_input = request.data.get("message", "").strip()
     #     user_id = request.data.get("user_id", "default_user")
     #     chat_id = request.data.get("chat_id")  # Accept chat_id from frontend
-        
+
     #     # Validate input
     #     if not user_input:
     #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
     #     try:
     #         user = User.objects.get(id=user_id)
     #     except User.DoesNotExist:
     #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #     # Generate a new chat_id if not provided
+    #     # Create a composite key to separate user and chat-specific memory
+    #     memory_key = f"{user_id}_{chat_id}"
+
+    #     # Generate a new chat_id if not provided (new chat)
     #     if not chat_id:
-    #         chat_id = str(uuid.uuid4())
-    #         print(f"[DEBUG] Generated new chat_id: {chat_id}")
+    #         chat_id = str(uuid.uuid4())  # New chat resets memory
+    #         print(f"[DEBUG] New chat created with chat_id: {chat_id}")
 
-    #     # Retrieve or create a chat session
-    #     chat, created = ChatBackup.objects.get_or_create(
-    #         user=user, chat_id=chat_id, defaults={"title": "User Chat", "messages": []}
-    #     )
-
-    #     # Generate assistant response
-    #     if user_id not in user_conversations:
-    #         user_conversations[user_id] = ConversationChain(
-    #             llm=llm_chatgpt, prompt=prompt_chatgpt, input_key="user_input", memory=ConversationBufferMemory()
-    #         )
-
-    #     conversation_chain = user_conversations[user_id]
-    #     assistant_response = conversation_chain.run(user_input=user_input)
-
-    #     # Append messages
-    #     chat.messages.append({"sender": "user", "text": user_input, "timestamp": datetime.datetime.now().isoformat()})
-    #     chat.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": datetime.datetime.now().isoformat()})
-    #     chat.save()
-
-    #     return Response({"response": assistant_response, "chat_id": chat_id})
-
-
-    # def handle_chat(self, request):
-    #     user_input = request.data.get("message", "").strip()
-    #     user_id = request.data.get("user_id", "default_user")
-    #     chat_id = request.data.get("chat_id")  # Accept chat_id from frontend
-        
-    #     # Validate input
-    #     if not user_input:
-    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    #     try:
-    #         user = User.objects.get(id=user_id)
-    #     except User.DoesNotExist:
-    #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    #     # Generate a new chat_id if not provided
-    #     if not chat_id:
-    #         chat_id = str(uuid.uuid4())
-    #         print(f"[DEBUG] Generated new chat_id: {chat_id}")
-
-    #     # Retrieve or create a chat session
-    #     chat, created = ChatBackup.objects.get_or_create(
-    #         user=user, chat_id=chat_id, defaults={"title": "User Chat", "messages": []}
-    #     )
-
-    #     # Reset conversation memory if this is a new chat
-    #     if created:
-    #         print(f"[DEBUG] Resetting conversation memory for new chat_id: {chat_id}")
-    #         user_conversations[user_id] = ConversationChain(
-    #             llm=llm_chatgpt, 
-    #             prompt=prompt_chatgpt, 
-    #             input_key="user_input", 
-    #             memory=ConversationBufferMemory()
-    #         )
-
-    #     # Fetch or initialize conversation chain
-    #     conversation_chain = user_conversations.get(user_id)
-    #     if not conversation_chain:
-    #         conversation_chain = ConversationChain(
+    #         # Initialize fresh conversation memory for a new chat
+    #         user_conversations[memory_key] = ConversationChain(
     #             llm=llm_chatgpt,
     #             prompt=prompt_chatgpt,
     #             input_key="user_input",
     #             memory=ConversationBufferMemory()
     #         )
-    #         user_conversations[user_id] = conversation_chain
+    #     else:
+    #         # Retrieve or create a chat session
+    #         chat, created = ChatBackup.objects.get_or_create(
+    #             user=user, chat_id=chat_id, defaults={"title": "User Chat", "messages": []}
+    #         )
+
+    #         if not created and memory_key not in user_conversations:
+    #             # Restore memory only if this is an existing chat
+    #             print(f"[DEBUG] Restoring memory for chat_id: {chat_id}")
+    #             restored_memory = ConversationBufferMemory()
+    #             for msg in chat.messages:
+    #                 sender = msg["sender"]
+    #                 text = msg["text"]
+    #                 restored_memory.chat_memory.add_message(
+    #                     AIMessage(content=text) if sender == "assistant" else HumanMessage(content=text)
+    #                 )
+
+    #             user_conversations[memory_key] = ConversationChain(
+    #                 llm=llm_chatgpt,
+    #                 prompt=prompt_chatgpt,
+    #                 input_key="user_input",
+    #                 memory=restored_memory
+    #             )
+
+    #     # Fetch the conversation chain
+    #     conversation_chain = user_conversations[memory_key]
 
     #     # Generate assistant response
     #     assistant_response = conversation_chain.run(user_input=user_input)
 
-    #     # Append messages to chat history
+    #     # Save the conversation to the database
+    #     chat, _ = ChatBackup.objects.get_or_create(
+    #         user=user, chat_id=chat_id, defaults={"title": "User Chat", "messages": []}
+    #     )
     #     chat.messages.append({"sender": "user", "text": user_input, "timestamp": datetime.datetime.now().isoformat()})
     #     chat.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": datetime.datetime.now().isoformat()})
     #     chat.save()
@@ -8708,6 +8554,10 @@ class UnifiedChatGPTAPI(APIView):
             chat_id = str(uuid.uuid4())  # New chat resets memory
             print(f"[DEBUG] New chat created with chat_id: {chat_id}")
 
+            # Derive dynamic chat title from the first user input
+            chat_title = user_input[:50]  # Use the first 50 characters of the input
+            print(f"[DEBUG] New chat title: {chat_title}")
+
             # Initialize fresh conversation memory for a new chat
             user_conversations[memory_key] = ConversationChain(
                 llm=llm_chatgpt,
@@ -8715,10 +8565,15 @@ class UnifiedChatGPTAPI(APIView):
                 input_key="user_input",
                 memory=ConversationBufferMemory()
             )
+
+            # Save the new chat with dynamic title
+            ChatBackup.objects.create(
+                user=user, chat_id=chat_id, title=chat_title, messages=[]
+            )
         else:
             # Retrieve or create a chat session
             chat, created = ChatBackup.objects.get_or_create(
-                user=user, chat_id=chat_id, defaults={"title": "User Chat", "messages": []}
+                user=user, chat_id=chat_id, defaults={"title": user_input[:50], "messages": []}
             )
 
             if not created and memory_key not in user_conversations:
@@ -8746,9 +8601,7 @@ class UnifiedChatGPTAPI(APIView):
         assistant_response = conversation_chain.run(user_input=user_input)
 
         # Save the conversation to the database
-        chat, _ = ChatBackup.objects.get_or_create(
-            user=user, chat_id=chat_id, defaults={"title": "User Chat", "messages": []}
-        )
+        chat = ChatBackup.objects.get(chat_id=chat_id)
         chat.messages.append({"sender": "user", "text": user_input, "timestamp": datetime.datetime.now().isoformat()})
         chat.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": datetime.datetime.now().isoformat()})
         chat.save()
@@ -8763,31 +8616,30 @@ class UnifiedChatGPTAPI(APIView):
 
 
 
-
-    def save_chat_to_db(self, user, chat_id, user_message, assistant_response):
-        """
-        Save the user message and assistant response to the ChatBackup model.
-        """
-        try:
-            # Fetch or create the chat record
-            chat, created = ChatBackup.objects.get_or_create(
-                user=user,
-                chat_id=chat_id,
-                defaults={
-                    "title": "User Chat",
-                    "messages": []
-                }
-            )
-            # Append the user and assistant messages
-            messages = chat.messages or []
-            messages.append({"sender": "user", "text": user_message, "timestamp": datetime.datetime.now().isoformat()})
-            messages.append({"sender": "assistant", "text": assistant_response, "timestamp": datetime.datetime.now().isoformat()})
-            # Update the chat record
-            chat.messages = messages
-            chat.save()
-            print(f"[DEBUG] Chat saved successfully for user {user.id} and chat_id {chat_id}.")
-        except Exception as e:
-            print(f"[ERROR] Failed to save chat: {str(e)}")
+    # def save_chat_to_db(self, user, chat_id, user_message, assistant_response):
+    #     """
+    #     Save the user message and assistant response to the ChatBackup model.
+    #     """
+    #     try:
+    #         # Fetch or create the chat record
+    #         chat, created = ChatBackup.objects.get_or_create(
+    #             user=user,
+    #             chat_id=chat_id,
+    #             defaults={
+    #                 "title": "User Chat",
+    #                 "messages": []
+    #             }
+    #         )
+    #         # Append the user and assistant messages
+    #         messages = chat.messages or []
+    #         messages.append({"sender": "user", "text": user_message, "timestamp": datetime.datetime.now().isoformat()})
+    #         messages.append({"sender": "assistant", "text": assistant_response, "timestamp": datetime.datetime.now().isoformat()})
+    #         # Update the chat record
+    #         chat.messages = messages
+    #         chat.save()
+    #         print(f"[DEBUG] Chat saved successfully for user {user.id} and chat_id {chat_id}.")
+    #     except Exception as e:
+    #         print(f"[ERROR] Failed to save chat: {str(e)}")
 
 
     def process_schema_confirmation(self, user_input, user_id):

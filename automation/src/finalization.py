@@ -425,7 +425,7 @@ def finalize_and_evaluate_model(best_model_class, best_params, X_train, y_train,
         response = requests.post(api_url, data=json.dumps(payload), headers=headers)
 
         if response.status_code == 201:
-            logger.info("Data successfully posted to the Django API with user_id and chat_id.")
+            logger.info("Data successfully posted to the Django API with {user_id} and chat_id.")
         else:
             logger.error(f"Failed to post data. Status code: {response.status_code}, Response: {response.text}")
 

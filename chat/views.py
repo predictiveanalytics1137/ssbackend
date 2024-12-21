@@ -8798,10 +8798,103 @@ class UnifiedChatGPTAPI(APIView):
 
 
 
-    def generate_notebook(self, request):
-        user_id = request.data.get("user_id", "default_user")
-        print("[DEBUG] Generating notebook for user:", user_id)
+    # def generate_notebook(self, request):
+    #     user_id = request.data.get("user_id", "default_user")
+    #     print("[DEBUG] Generating notebook for user:", user_id)
 
+    #     if user_id not in user_confirmations:
+    #         print("[ERROR] Schema not confirmed yet.")
+    #         return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     confirmation = user_confirmations[user_id]
+    #     entity_id_column = confirmation['entity_id_column']
+    #     target_column = confirmation['target_column']
+    #     feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
+
+    #     if user_id in user_schemas:
+    #         uploaded_file_info = user_schemas[user_id][0]
+    #         table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
+    #         sanitized_table_name = self.sanitize_identifier(table_name_raw)
+    #         file_url = uploaded_file_info.get('file_url')
+    #     else:
+    #         print("[ERROR] Uploaded file info not found.")
+    #         return Response({"error": "Uploaded file info not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
+
+    #     if not self.validate_column_exists(entity_id_column, columns_list):
+    #         return Response({"error": f"Entity ID column '{entity_id_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     if not self.validate_column_exists(target_column, columns_list):
+    #         return Response({"error": f"Target column '{target_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Generate notebooks as before (code omitted for brevity)
+    #     notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, sanitized_table_name, columns_list)
+    #     notebook_features = self.create_features_notebook(feature_columns, sanitized_table_name, columns_list)
+
+    #     notebook_entity_target_sanitized = self.sanitize_notebook(notebook_entity_target)
+    #     notebook_features_sanitized = self.sanitize_notebook(notebook_features)
+
+    #     notebook_entity_target_json = nbformat.writes(notebook_entity_target_sanitized, version=4)
+    #     notebook_features_json = nbformat.writes(notebook_features_sanitized, version=4)
+
+    #     user_notebooks[user_id] = {
+    #         'entity_target_notebook': notebook_entity_target_json,
+    #         'features_notebook': notebook_features_json
+    #     }
+
+    #     print("[DEBUG] Notebooks generated successfully for user:", user_id)
+    #     print("[DEBUG] Preparing data for the frontend...")
+
+    #     # Hardcoded user_id and chat_id for now
+    #     user_id_for_payload = "18"
+    #     chat_id_for_payload = "2"
+
+    #     # Now we return the automation-related details directly in the response
+    #     # so that the frontend can use them when it decides to run the training/prediction.
+    #     response_data = {
+    #         "message": "Notebooks generated successfully. Use the returned data to start training when ready.",
+    #         "notebooks": user_notebooks[user_id],
+
+    #         # Return the information needed for the data pipeline endpoints
+    #         "file_url": file_url,
+    #         "entity_column": entity_id_column,
+    #         "target_column": target_column,
+    #         "features": feature_columns,
+    #         # Hardcoded identifiers for now
+    #         "user_id": user_id_for_payload,
+    #         "chat_id": chat_id_for_payload
+    #     }
+    #     print("[DEBUG] Data prepared for the frontend:", response_data)
+
+    #     return Response(response_data, status=status.HTTP_200_OK)
+
+    def generate_notebook(self, request):
+        # Retrieve user_id and chat_id from the request payload
+        user_id = request.data.get("user_id")
+        chat_id = request.data.get("chat_id")
+        print("[DEBUG] Generating notebook for user_id:", user_id, "and chat_id:", chat_id)
+
+        # Validate input
+        if not user_id or not chat_id:
+            print("[ERROR] user_id or chat_id missing in the request.")
+            return Response({"error": "user_id and chat_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ensure the user exists
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            print(f"[ERROR] User with id {user_id} not found.")
+            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ensure the chat exists
+        try:
+            chat = ChatBackup.objects.get(chat_id=chat_id, user=user)
+        except ChatBackup.DoesNotExist:
+            print(f"[ERROR] Chat with id {chat_id} not found for user {user_id}.")
+            return Response({"error": "Chat not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ensure schema confirmation exists for the user
         if user_id not in user_confirmations:
             print("[ERROR] Schema not confirmed yet.")
             return Response({"error": "Schema not confirmed yet."}, status=status.HTTP_400_BAD_REQUEST)
@@ -8811,6 +8904,7 @@ class UnifiedChatGPTAPI(APIView):
         target_column = confirmation['target_column']
         feature_columns = [col['column_name'] for col in confirmation['feature_columns']]
 
+        # Get uploaded file info
         if user_id in user_schemas:
             uploaded_file_info = user_schemas[user_id][0]
             table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
@@ -8822,13 +8916,13 @@ class UnifiedChatGPTAPI(APIView):
 
         columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
 
+        # Validate columns
         if not self.validate_column_exists(entity_id_column, columns_list):
             return Response({"error": f"Entity ID column '{entity_id_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
-
         if not self.validate_column_exists(target_column, columns_list):
             return Response({"error": f"Target column '{target_column}' does not exist."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Generate notebooks as before (code omitted for brevity)
+        # Generate notebooks
         notebook_entity_target = self.create_entity_target_notebook(entity_id_column, target_column, sanitized_table_name, columns_list)
         notebook_features = self.create_features_notebook(feature_columns, sanitized_table_name, columns_list)
 
@@ -8844,30 +8938,22 @@ class UnifiedChatGPTAPI(APIView):
         }
 
         print("[DEBUG] Notebooks generated successfully for user:", user_id)
-        print("[DEBUG] Preparing data for the frontend...")
+        print("[DEBUG] Returning data to the frontend...")
 
-        # Hardcoded user_id and chat_id for now
-        user_id_for_payload = "12"
-        chat_id_for_payload = "5"
-
-        # Now we return the automation-related details directly in the response
-        # so that the frontend can use them when it decides to run the training/prediction.
         response_data = {
-            "message": "Notebooks generated successfully. Use the returned data to start training when ready.",
+            "message": "Notebooks generated successfully.",
             "notebooks": user_notebooks[user_id],
-
-            # Return the information needed for the data pipeline endpoints
             "file_url": file_url,
             "entity_column": entity_id_column,
             "target_column": target_column,
             "features": feature_columns,
-            # Hardcoded identifiers for now
-            "user_id": user_id_for_payload,
-            "chat_id": chat_id_for_payload
+            "user_id": user_id,
+            "chat_id": chat_id,
         }
-        print("[DEBUG] Data prepared for the frontend:", response_data)
 
+        print("[DEBUG] Response data prepared:", response_data)
         return Response(response_data, status=status.HTTP_200_OK)
+
 
 
     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str, file_size_mb: float):

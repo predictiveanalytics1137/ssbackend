@@ -323,10 +323,11 @@ import json
 import numpy as np
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from src.logging_config import get_logger
+import pandas as pd
 
 logger = get_logger(__name__)
 
-def finalize_and_evaluate_model(best_model_class, best_params, X_train, y_train, X_test, y_test, user_id, chat_id):
+def finalize_and_evaluate_model(best_model_class, best_params, X_train, y_train, X_test, y_test, user_id, chat_id,test_ids):
     """
     Finalizes the model, evaluates it, and posts results along with user_id and chat_id.
     """
@@ -339,6 +340,17 @@ def finalize_and_evaluate_model(best_model_class, best_params, X_train, y_train,
 
         logger.info("Predicting on the test set...")
         y_test_pred = best_model.predict(X_test)
+
+        # Combine predictions with test IDs
+        logger.info("Merging test predictions with IDs...")
+        predictions_with_ids = pd.DataFrame({
+            'ID': test_ids,
+            'Actual': y_test.tolist(),
+            'Predicted': y_test_pred.tolist()
+        })
+        logger.info("Predictions with IDs:")
+        logger.info(f"\n{predictions_with_ids.head()}")
+        print(predictions_with_ids)
 
         logger.info("Predicting on the training set...")
         y_train_pred = best_model.predict(X_train)

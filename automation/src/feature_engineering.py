@@ -93,7 +93,7 @@ import featuretools as ft
 #         raise RuntimeError(f"Error during feature engineering: {e}")
 
 
-def feature_engineering(df, target_column=None, dataframe_name="main", training=True, feature_defs=None):
+def feature_engineering(df, target_column=None, dataframe_name="main", training=True, feature_defs=None, id_column=None):
     """
     Performs automated feature engineering using FeatureTools for both training and prediction.
 
@@ -103,6 +103,7 @@ def feature_engineering(df, target_column=None, dataframe_name="main", training=
     - dataframe_name: Name for the main dataframe in FeatureTools.
     - training: Boolean indicating whether it is training or prediction phase.
     - feature_defs: List of feature definitions (required during prediction).
+    - id_column: The name of the entity column (e.g., ID column) to exclude from feature engineering.
 
     Returns:
     - feature_matrix: DataFrame with engineered features.
@@ -115,6 +116,12 @@ def feature_engineering(df, target_column=None, dataframe_name="main", training=
             df = df.drop(columns=[target_column])
         else:
             target = None
+            
+        # Exclude the ID column if specified
+        if id_column and id_column in df.columns:
+            id_data = df[id_column].copy()  # Save the ID column for later use
+            df = df.drop(columns=[id_column])
+            logger.info(f"Excluded entity column '{id_column}' from feature engineering.")
 
         # Identify binary columns
         binary_columns = df.columns[(df.nunique() == 2) & ((df.dtypes == "int64") | (df.dtypes == "float64"))].tolist()
@@ -164,6 +171,10 @@ def feature_engineering(df, target_column=None, dataframe_name="main", training=
         feature_matrix = pd.concat([feature_matrix, df[binary_columns]], axis=1)
         if target is not None:
             feature_matrix[target_column] = target
+            
+        # Add back the ID column (unaltered) if applicable
+        if id_column:
+            feature_matrix[id_column] = id_data
 
         # Return the feature matrix and feature definitions (only for training)
         if training:

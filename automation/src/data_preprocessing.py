@@ -20,13 +20,16 @@ It captures the relationship between the category and the target but requires ca
 '''
 
 
-def handle_categorical_features(df, target_column=None, cardinality_threshold=3, encoders=None, saved_column_names=None):
+def handle_categorical_features(df, target_column=None, cardinality_threshold=3, encoders=None, saved_column_names=None, id_column=None):
     logger.info("Starting to handle categorical features...")
 
     try:
         # Identify categorical columns
         categorical_columns = df.select_dtypes(include=['object']).columns.tolist()
         logger.info(f"Categorical columns identified: {categorical_columns}")
+        if id_column in categorical_columns:
+            categorical_columns.remove(id_column)
+            logger.info(f"Excluded ID column '{id_column}' from categorical processing.")
 
         df_encoded = df.copy()
         if encoders is None:
@@ -78,15 +81,37 @@ def handle_categorical_features(df, target_column=None, cardinality_threshold=3,
                     encoders[column] = encoder
 
         # Convert boolean columns to 0 and 1
+        # bool_columns = df_encoded.select_dtypes(include=['bool']).columns.tolist()
+        # if bool_columns:
+        #     df_encoded[bool_columns] = df_encoded[bool_columns].replace({True: 1, False: 0})
+
+        # Convert boolean columns to 0 and 1
+        # bool_columns = df_encoded.select_dtypes(include=['bool']).columns.tolist()
+        # if bool_columns:
+        #     # Perform the replacement and ensure the dtype is explicitly set to int
+        #     df_encoded[bool_columns] = (
+        #         df_encoded[bool_columns]
+        #         .replace({True: 1, False: 0})
+        #         .astype(int)
+        #     )
+
+        # Convert boolean columns to integers explicitly, avoiding replace
         bool_columns = df_encoded.select_dtypes(include=['bool']).columns.tolist()
         if bool_columns:
-            df_encoded[bool_columns] = df_encoded[bool_columns].replace({True: 1, False: 0})
+            for col in bool_columns:
+                logger.info(f"Converting boolean column '{col}' to integers.")
+                # Directly convert boolean to integers using astype
+                df_encoded[col] = df_encoded[col].astype('int64')
+
+
 
         logger.info("Completed handling of categorical features.")
 
         # Align columns with the training data, ensuring that any missing columns are added
         if saved_column_names:
             logger.info(f"Aligning columns with training data: {saved_column_names}")
+            # Exclude the ID column from alignment
+            saved_column_names = [col for col in saved_column_names if col != id_column]
             missing_cols = [col for col in saved_column_names if col not in df_encoded.columns]
             for col in missing_cols:
                 df_encoded[col] = 0

@@ -676,13 +676,15 @@ class DataForAutomationAPI(APIView):
 
     def post(self, request):
         print("[DEBUG] DataForAutomationAPI: Received POST request.")
+        print("this is getting printed")
         data = request.data
         file_url = data.get("file_url")
         target_column = data.get("target_column")
+        column_id = data.get("column_id")
         user_id = data.get("user_id")  # now we expect user_id from frontend
         chat_id = data.get("chat_id")  # now we expect chat_id from frontend
 
-        print(f"[DEBUG] Extracted file_url: {file_url}, target_column: {target_column}, user_id: {user_id}, chat_id: {chat_id}")
+        print(f"[DEBUG] Extracted file_url: {file_url}, target_column: {target_column}, user_id: {user_id}, chat_id: {chat_id}, column_id: {column_id}")
 
         # Validate request data
         if not file_url or not target_column or not user_id or not chat_id:
@@ -691,15 +693,17 @@ class DataForAutomationAPI(APIView):
                 "target_column": target_column,
                 "user_id": user_id,
                 "chat_id": chat_id,
+                "column_id": column_id
             })
             return Response(
-                {"error": "Missing required data: file_url, target_column, user_id, chat_id"},
+                {"error": "Missing required data: file_url, target_column, user_id, chat_id, column_id"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
             # Full path to the train_pipeline.py script
-            script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\train_pipeline.py"
+            # script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\train_pipeline.py"
+            script_path = r"C:\sandy2\ssbackend\automation\scripts\train_pipeline.py"
             print(f"[DEBUG] Script path: {script_path}")
 
             # Construct the command to run train_pipeline.py
@@ -710,6 +714,7 @@ class DataForAutomationAPI(APIView):
                 "--target_column", target_column,
                 "--user_id", str(user_id),
                 "--chat_id", str(chat_id),
+                "--column_id", column_id
             ]
             print(f"[DEBUG] Constructed command: {' '.join(command)}")
 
@@ -770,12 +775,14 @@ class PredictDataAPI(APIView):
     """
 
     def post(self, request):
+        print("in the predictions")
         print("[DEBUG] PredictDataAPI: Received POST request.")
         print("[DEBUG] Request data:", request.data)
 
         # Extract data from the request
         file_url = request.data.get("file_url")
         bucket_name = request.data.get("bucket_name")
+        column_id = request.data.get("column_id")
         print(f"[DEBUG] Extracted file_url: {file_url}, bucket_name: {bucket_name}")
 
         # Validate request data
@@ -788,7 +795,8 @@ class PredictDataAPI(APIView):
 
         try:
             # Full path to the predict.py script
-            script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\predict.py"
+            # script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\predict.py"
+            script_path = r"C:\sandy2\ssbackend\automation\scripts\predict.py"
             print(f"[DEBUG] Script path: {script_path}")
 
             # Construct the command to run predict.py
@@ -796,7 +804,8 @@ class PredictDataAPI(APIView):
                 "python", 
                 script_path, 
                 "--file_url", file_url, 
-                "--bucket_name", bucket_name
+                "--bucket_name", bucket_name,
+                "--column_id", column_id
             ]
             print(f"[DEBUG] Constructed command: {' '.join(command)}")
 

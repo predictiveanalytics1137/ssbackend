@@ -10,7 +10,8 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-def feature_selection(df, target_column, task="regression", variance_threshold=0.01, corr_threshold=0.9, top_n_features=15, save_path=None):
+
+def feature_selection(df, target_column, task="regression", variance_threshold=0.01, corr_threshold=0.9, top_n_features=15, save_path=None, id_column=None):
     """
     Performs sophisticated feature selection using filter, embedded, and wrapper methods.
 
@@ -29,6 +30,12 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
     """
     try:
         logger.info("Starting feature selection...")
+        
+        # Exclude the ID column if provided
+        if id_column and id_column in df.columns:
+            id_data = df[id_column].copy()
+            df = df.drop(columns=[id_column])
+            logger.info(f"Excluded entity column '{id_column}' from feature selection.")
         
         # 1. Separate features and target
         X = df.drop(columns=[target_column])
@@ -84,6 +91,11 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
             
         # Recombine selected features with the target column
         df_final = pd.concat([X_final, y.reset_index(drop=True)], axis=1)
+        
+        # Add back the ID column if applicable
+        if id_column:
+            df_final[id_column] = id_data
+            logger.info(f"Added back entity column '{id_column}' to the final DataFrame.")
 
         # 6. Save selected features (optional)
         # if save_path:

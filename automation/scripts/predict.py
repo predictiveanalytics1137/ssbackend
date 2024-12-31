@@ -5,9 +5,12 @@ import boto3
 import pandas as pd
 from io import StringIO
 
+
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pipeline import predict_new_data
-
+from src.logging_config import get_logger
+logger = get_logger(__name__)
 
 def fetch_csv_from_s3(s3_path):
     """
@@ -50,12 +53,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the prediction pipeline.")
     parser.add_argument("--file_url", required=True, help="S3 file URL for the CSV data.")
     parser.add_argument("--bucket_name", default="artifacts1137", help="S3 bucket name where artifacts are stored.")
+    parser.add_argument("--column_id", required=True, help="Column ID for this training session.")
     args = parser.parse_args()
 
     # Debugging log for inputs
     print(f"[INFO] Received file_url: {args.file_url}")
     print(f"[INFO] Received bucket_name: {args.bucket_name}")
+    print(f"[INFO] Received column_id: {args.column_id}")
 
+    logger.info(f"Received file_url: {args.file_url}")
+    logger.info(f"Received bucket_name: {args.bucket_name}")
+    logger.info(f"Received column_id: {args.column_id}")
+    
     try:
         # Fetch data from S3
         print("[INFO] Fetching data from S3...")
@@ -65,7 +74,7 @@ if __name__ == "__main__":
 
         # Run predictions
         print("[INFO] Running predictions...")
-        predictions = predict_new_data(data, args.bucket_name)
+        predictions = predict_new_data(data, args.bucket_name, args.column_id)
         print("[INFO] Predictions completed successfully:")
         print(predictions)
 

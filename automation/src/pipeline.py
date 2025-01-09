@@ -301,6 +301,10 @@ from sklearn.model_selection import train_test_split
 
 logger = get_logger(__name__)
 
+# NEW:
+from src.outlier_handling import detect_and_handle_outliers_train, apply_outlier_bounds
+
+
 # -----------------------------------------------------------------------------
 # ADDED HELPER FUNCTION: Generate and log SHAP summary after model is trained
 # -----------------------------------------------------------------------------
@@ -387,14 +391,32 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         train_df_imputed, imputers = automatic_imputation(train_df, target_column=target_column)
         logger.info("Starting missing value imputation on TEST set...")
         test_df_imputed, _ = automatic_imputation(test_df, target_column=target_column, imputers=imputers)
+        
+        # 4. --------------------------------
+        #    OUTLIER DETECTION and handling (Train & Test separately)
+        # --------------------------------
+        
+        # OUTLIER DETECTION on TRAIN
+        logger.info("Computing outlier bounds and capping on TRAIN set (IQR-based).")
+        train_df_outlier_fixed, outlier_bounds = detect_and_handle_outliers_train(
+            train_df_imputed,
+            factor=1.5
+        )
 
-        # 4. ----------------------------------
+        # Apply the same outlier bounds to TEST set
+        logger.info("Applying outlier bounds to TEST set.")
+        test_df_outlier_fixed = apply_outlier_bounds(
+            test_df_imputed,
+            outlier_bounds
+        )
+
+        # 5. ----------------------------------
         #    Handle Categorical (Train & Test)
         #    Using target_column for TEs only
         # -------------------------------------
         logger.info("Handling categorical features on TRAIN set...")
         train_df_encoded, encoders = handle_categorical_features(
-            train_df_imputed,
+            train_df_outlier_fixed,
             target_column=target_column,     # safe because we're doing training
             id_column=None,                  # we've already dropped ID here
             cardinality_threshold=3
@@ -402,7 +424,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
 
         logger.info("Handling categorical features on TEST set...")
         test_df_encoded, _ = handle_categorical_features(
-            test_df_imputed,
+            test_df_outlier_fixed,
             target_column=target_column,     # we want to transform using the same TEs
             encoders=encoders,
             id_column=None,
@@ -410,7 +432,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
             saved_column_names=train_df_encoded.columns.tolist()
         )
 
-        # 5. --------------------------------
+        # 6. --------------------------------
         #    Feature Engineering
         # ------------------------------------
         logger.info("Performing feature engineering on TRAIN set...")
@@ -431,7 +453,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         )
         test_engineered = normalize_column_names(test_engineered)
 
-        # 6. --------------------------------
+        # 7. --------------------------------
         #    Feature Selection
         # ------------------------------------
         logger.info("Performing feature selection on TRAIN set...")
@@ -452,7 +474,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         #y_test = test_engineered[target_column]
         y_test = y_test_raw
 
-        # 7. --------------------------------
+        # 8. --------------------------------
         #    Model Selection (just to pick best model)
         # ------------------------------------
         logger.info("Selecting best model from baseline pool...")
@@ -468,7 +490,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
             task='regression'
         )
 
-        # 8. --------------------------------
+        # 9. --------------------------------
         #    Hyperparameter Tuning
         # ------------------------------------
         logger.info(f"Performing hyperparameter tuning for the best model: {best_model_name}...")
@@ -481,7 +503,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
             task='regression'
         )
 
-        # 9. --------------------------------
+        # 10. --------------------------------
         #    Finalize, Evaluate, & SHAP
         # ------------------------------------
         logger.info("Finalizing and evaluating the model...")
@@ -502,7 +524,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         generate_shap_summary(best_model, X_sample)
         #print(generate_shap_summary(best_model, X_sample))
 
-        # 10. -------------------------------
+        # 11. -------------------------------
         #     Save Artifacts to S3
         # ------------------------------------
         logger.info("Uploading artifacts directly to S3...")
@@ -524,6 +546,9 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         save_to_s3(encoders, 'encoder.joblib')
         save_to_s3(feature_defs, 'feature_defs.joblib')
         save_to_s3(selected_features, 'selected_features.pkl')
+        
+        # NEW: Save the outlier_bounds for usage at prediction time
+        save_to_s3(outlier_bounds, 'outlier_bounds.pkl')
 
         # We can store the train_df_encoded columns if needed for alignment
         saved_column_names = train_df_encoded.columns.tolist()
@@ -594,13 +619,20 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None,chat_
         selected_features = joblib.load(load_from_s3(bucket_name, prefix + "selected_features.pkl"))
         feature_defs = joblib.load(load_from_s3(bucket_name, prefix + "feature_defs.joblib"))
         saved_column_names = joblib.load(load_from_s3(bucket_name, prefix + "saved_column_names.pkl"))
+        # NEW: outlier_bounds
+        outlier_bounds    = joblib.load(load_from_s3(bucket_name, prefix + "outlier_bounds.pkl"))
 
         # Imputation
         new_data_imputed, _ = automatic_imputation(new_data, target_column=None, imputers=imputers)
 
+        
+        # 2) Apply Outlier Bounds from Training
+        logger.info("Applying stored outlier bounds to new data...")
+        new_data_outlier_fixed = apply_outlier_bounds(new_data_imputed, outlier_bounds)
+
         # Encoding
         new_data_encoded, _ = handle_categorical_features(
-            new_data_imputed,
+            new_data_outlier_fixed,
             cardinality_threshold=10,
             encoders=encoders,
             saved_column_names=saved_column_names,

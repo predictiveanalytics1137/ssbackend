@@ -142,7 +142,7 @@ def fetch_csv_from_s3(s3_path):
 
 if __name__ == "__main__":
     
-    data = "s3://pa-documents-storage-bucket/uploads/4a87aeba/Updated_Dataset_with_Entity_Column.csv"
+    data = "s3://pa-documents-storage-bucket/uploads/4a87aeba/Updated_Dataset_with_Entity_Columnn.csv"
     data = fetch_csv_from_s3(data)
 
             #best_model, best_params = train_pipeline(data, args.target_column, args.user_id, args.chat_id, args.column_id)

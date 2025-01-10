@@ -298,6 +298,7 @@ from src.hyperparameter_tuning import hyperparameter_tuning
 from src.model_selection import train_test_model_selection
 from src.utils import automatic_imputation
 from sklearn.model_selection import train_test_split
+import datetime
 
 logger = get_logger(__name__)
 
@@ -367,6 +368,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         # automatic imputation, categorical handling, feature engineering, etc. on each set.
 
         id_data = df[column_id].copy()
+        
 
         # Keep a copy so we can do transformations on training set first
         # Temporarily drop ID so it won't be accidentally encoded
@@ -380,12 +382,15 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
         X_train_raw, X_test_raw, y_train_raw, y_test_raw = train_test_split(
             X, y, test_size=0.2, random_state=42
         )
+        test_ids = id_data.loc[X_test_raw.index]
+
 
         # 3. --------------------------------
         #    Imputation (Train & Test separately)
         # --------------------------------
         train_df = pd.concat([X_train_raw, y_train_raw], axis=1)
         test_df = pd.concat([X_test_raw, y_test_raw], axis=1)
+        
 
         logger.info("Starting missing value imputation on TRAIN set...")
         train_df_imputed, imputers = automatic_imputation(train_df, target_column=target_column)
@@ -514,7 +519,8 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
             X_test, y_test,
             user_id=user_id,
             chat_id=chat_id,
-            test_ids=None  # ID handling not shown here
+            test_ids = test_ids
+            #test_ids=None  # ID handling not shown here
         )
 
         # Generate SHAP explanations
@@ -660,6 +666,28 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None,chat_
             predictions_with_ids[id_column] = ids
 
         logger.info(f"Prediction done. Sample:\n{predictions_with_ids.head()}")
+        
+        
+        
+        
+        
+        
+        # Save predictions to S3
+        logger.info("Saving predictions to S3...")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")  # Unique timestamp
+        predictions_csv_key = f"ml-artifacts/{chat_id}/predictions/predictions_{timestamp}.csv"
+
+        # Convert DataFrame to CSV and save to S3
+        csv_buffer = io.StringIO()
+        predictions_with_ids.to_csv(csv_buffer, index=False)
+        csv_buffer.seek(0)  # Reset buffer to the beginning
+
+        # Convert to BytesIO for upload
+        bytes_buffer = io.BytesIO(csv_buffer.getvalue().encode('utf-8'))
+        upload_to_s3(bytes_buffer, bucket_name, predictions_csv_key)
+        
+        
+        
         return predictions_with_ids
 
     except Exception as e:

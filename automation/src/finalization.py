@@ -141,6 +141,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from src.logging_config import get_logger
+import io
+from src.s3_operations import upload_to_s3
 
 logger = get_logger(__name__)
 
@@ -159,6 +161,9 @@ def finalize_and_evaluate_model(best_model_class, best_params, X_train, y_train,
 
         logger.info("Predicting on test set...")
         y_test_pred = best_model.predict(X_test)
+        
+        # Prepare predictions DataFrame with IDs
+        predictions_with_ids = None
 
         if test_ids is not None:
             predictions_with_ids = pd.DataFrame({
@@ -199,6 +204,25 @@ def finalize_and_evaluate_model(best_model_class, best_params, X_train, y_train,
             'Testing': {'RMSE': test_rmse, 'R2': test_r2, 'MAE': test_mae},
             'Assessment': model_assessment
         }
+        
+        
+        
+        
+       # Save predictions to S3 as CSV
+        if predictions_with_ids is not None:
+            logger.info("Saving predictions with IDs to S3...")
+            bucket_name = "artifacts1137"
+            predictions_csv_key = f"ml-artifacts/{chat_id}/testpredictions_with_ids.csv"
+
+            # Convert StringIO to BytesIO
+            csv_buffer = io.StringIO()
+            predictions_with_ids.to_csv(csv_buffer, index=False)
+            csv_buffer.seek(0)  # Reset buffer to the beginning
+
+            # Convert to BytesIO for upload
+            bytes_buffer = io.BytesIO(csv_buffer.getvalue().encode('utf-8'))
+            upload_to_s3(bytes_buffer, bucket_name, predictions_csv_key)
+            logger.info(f"Predictions saved to s3://{bucket_name}/{predictions_csv_key}")
         
         
         

@@ -144,3 +144,9 @@ class ExecuteSQLView(APIView):
         }
         # Normalize the athena_type to lowercase for mapping
         return type_mapping.get(athena_type.lower(), athena_type)
+
+
+
+
+
+

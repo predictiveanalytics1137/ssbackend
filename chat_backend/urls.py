@@ -35,6 +35,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('Sql_Notebook.urls')),  # Notebook-related endpoints
     path('api/', include('data_pipeline.urls')),  # Data pipeline endpoints
+    path('api/', include('predictions_page.urls')),
     path('api/', include('chat.urls')),  # Chat endpoints
     path('model/', include('result.urls')),
     path('api/auth/', include('accounts.urls')),

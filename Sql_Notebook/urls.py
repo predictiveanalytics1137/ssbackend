@@ -14,4 +14,5 @@ from .views import ExecuteSQLView
 
 urlpatterns = [
     path('execute-sql/', ExecuteSQLView.as_view(), name='execute-sql'),  # SQL execution endpoint
+
 ]

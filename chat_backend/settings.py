@@ -49,6 +49,8 @@ INSTALLED_APPS = [
     'result',
     'rest_framework_simplejwt',
     'accounts',
+    'Sql_Notebook',
+    'predictions_page',
 ]
 
 

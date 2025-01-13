@@ -26,3 +26,6 @@ Myenv
 .env
 __pycache__/
 chat/__pycache__/
+
+# Ignore .pyc files
+*.pyc

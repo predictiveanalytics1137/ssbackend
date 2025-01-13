@@ -299,6 +299,10 @@ from src.model_selection import train_test_model_selection
 from src.utils import automatic_imputation
 from sklearn.model_selection import train_test_split
 import datetime
+import requests
+import time
+import uuid
+
 
 logger = get_logger(__name__)
 
@@ -599,7 +603,7 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
 
 
 
-def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None,chat_id = None):
+def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None,chat_id = None,user_id=None):
     """
     Loads trained model and artifacts to predict on new data.
     With data schema checks & improved handling.
@@ -617,6 +621,53 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None,chat_
             new_data = new_data.drop(columns=[id_column])
         else:
             ids = None
+            
+        # Generate a unique prediction ID
+        # prediction_id = str(uuid.uuid4())
+        prediction_id = str(uuid.uuid4())[:8]
+        
+        # Step 1: Log the start time and initial status
+        
+        
+        start_time = datetime.datetime.now()
+        metadata_api_url = "http://127.0.0.1:8000/api/update_prediction_status/"
+        entity_count = new_data.shape[0]
+        
+        # Create the initial metadata
+        response = requests.post(metadata_api_url, json={
+            'prediction_id': prediction_id,
+            'chat_id': chat_id,
+            'user_id': user_id,
+            'status': 'inprogress',
+            'entity_count': entity_count,
+            'start_time': start_time.isoformat()
+        })
+        if response.status_code != 201:
+            logger.error(f"Failed to create metadata: {response.json()}")
+            raise RuntimeError("Initial metadata creation failed.")
+
+            
+       
+
+            
+        
+
+# =============================================================================
+#         requests.post(metadata_api_url, json={
+#             'chat_id': chat_id,
+#             'status': 'inprogress',
+#             'entity_count': entity_count,
+#             'user_id':user_id
+#         })
+# =============================================================================
+
+
+        
+
+
+        # Prediction process starts
+        logger.info("Starting prediction process...")
+        start_timer = time.time()
 
         prefix = f"ml-artifacts/{chat_id}/"
         model = joblib.load(load_from_s3(bucket_name, prefix + "best_model.joblib"))
@@ -686,6 +737,29 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None,chat_
         bytes_buffer = io.BytesIO(csv_buffer.getvalue().encode('utf-8'))
         upload_to_s3(bytes_buffer, bucket_name, predictions_csv_key)
         
+        
+        
+        
+        # Step 3: Calculate duration and log final status
+        duration = time.time() - start_timer
+        
+        
+        
+        
+        
+        
+        metadata_api_url = f"http://127.0.0.1:8000/api/update_prediction_status/{prediction_id}/"
+
+        # Send PATCH request to update metadata
+        response = requests.patch(metadata_api_url, json={
+                    'status': 'success',
+                    'duration': duration,
+                    'predictions_csv_path': predictions_csv_key
+                })
+        if response.status_code != 200:
+            logger.error(f"Failed to update metadata: {response.json()}")
+            raise RuntimeError("Final metadata update failed.")
+    
         
         
         return predictions_with_ids

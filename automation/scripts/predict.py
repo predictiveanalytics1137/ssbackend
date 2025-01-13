@@ -94,8 +94,11 @@ import sys
 import pandas as pd
 import boto3
 from io import StringIO
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pipeline import predict_new_data
 from src.logging_config import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -158,13 +161,16 @@ if __name__ == "__main__":
     new_data=data, 
     bucket_name="artifacts1137", 
     id_column="entity_id", 
-    chat_id="IDSH938749"
+    chat_id="IDSH938749",
+    user_id="9938938HHDU"
 )
-    
-    
-    
 
-    
+
+
+
+
+
+
 # =============================================================================
 #     parser = argparse.ArgumentParser(description="Run the prediction pipeline.")
 #     parser.add_argument("--file_url", required=True, help="S3 file URL for the CSV data.")

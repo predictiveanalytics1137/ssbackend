@@ -304,6 +304,7 @@ import time
 import uuid
 
 
+
 logger = get_logger(__name__)
 
 # NEW:
@@ -357,6 +358,66 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
             raise ValueError(f"Target column '{target_column}' is entirely null.")
 
         logger.info(f"Entity (ID) column '{column_id}' will be retained.")
+        
+        
+        
+        
+        
+        
+# =============================================================================
+#         
+#         
+#         start_time = datetime.datetime.now()
+#         metadata_api_url = f"http://127.0.0.1:8000/api/update_prediction_status/"
+#         entity_count = df.shape[0]
+# 
+#         # Initial metadata logging
+#         response = requests.post(metadata_api_url, json={
+#             'chat_id': chat_id,
+#             'user_id': user_id,
+#             'status': 'training_started',
+#             'entity_count': entity_count,
+#             'start_time': start_time.isoformat()
+#         })
+#         if response.status_code != 201:
+#             logger.error(f"Failed to log training start: {response.json()}")
+#             raise RuntimeError("Initial metadata creation failed.")
+#             
+# =============================================================================
+            
+            
+            
+            
+        #training_id = str(uuid.uuid4())[:8]
+        training_id = chat_id
+        start_time = datetime.datetime.now()
+        start_timer = time.time()
+        metadata_api_url = "http://127.0.0.1:8000/api/update_prediction_status/"
+        entity_count = df.shape[0]
+        
+        # Create the initial metadata
+        response = requests.post(metadata_api_url, json={
+            'prediction_id': training_id,
+            'chat_id': chat_id,
+            'user_id': user_id,
+            'status': 'inprogress',
+            'entity_count': entity_count,
+            'start_time': start_time.isoformat()
+        })
+        if response.status_code != 201:
+            logger.error(f"Failed to create metadata: {response.json()}")
+            raise RuntimeError("Initial metadata creation failed.")
+        
+        
+        
+        
+        
+        
+
+            
+            
+            
+            
 
         # 2. --------------------------
         #    Train-Test Split (EARLY)
@@ -461,6 +522,26 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
             id_column=None
         )
         test_engineered = normalize_column_names(test_engineered)
+        
+        
+        
+        
+
+        metadata_api_url = f"http://127.0.0.1:8000/api/update_prediction_status/{training_id}/"
+
+        # Send PATCH request to update metadata
+        response = requests.patch(metadata_api_url, json={
+                    'status': 'future_engineering'
+                })
+        if response.status_code != 200:
+            logger.error(f"Failed to update metadata: {response.json()}")
+            raise RuntimeError("Final metadata update failed.")
+        
+        
+
+            
+            
+            
 
         # 7. --------------------------------
         #    Feature Selection
@@ -568,6 +649,23 @@ def train_pipeline(df, target_column, user_id, chat_id, column_id):
 
         logger.info("Artifacts uploaded to S3 successfully.")
         logger.info(f"Final metrics: {final_metrics}")
+        
+        
+        
+        
+        
+        
+        duration = time.time() - start_timer
+        metadata_api_url = f"http://127.0.0.1:8000/api/update_prediction_status/{training_id}/"
+
+        # Send PATCH request to update metadata
+        response = requests.patch(metadata_api_url, json={
+                    'status': 'training_completed',
+                    'duration': duration
+                })
+        if response.status_code != 200:
+            logger.error(f"Failed to update metadata: {response.json()}")
+            raise RuntimeError("Final metadata update failed.")
         return best_model, best_params
 
     except Exception as e:

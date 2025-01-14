@@ -18191,8 +18191,26 @@ def execute_sql_query(query: str) -> pd.DataFrame:
         print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
         return pd.DataFrame()
 
+# def normalize_column_name(col_name: str) -> str:
+#     return col_name.strip().lower().replace(' ', '_')
+
+import re
+
 def normalize_column_name(col_name: str) -> str:
-    return col_name.strip().lower().replace(' ', '_')
+    # Convert to lowercase and trim whitespace
+    normalized = col_name.strip().lower()
+    
+    # Replace spaces with underscores
+    normalized = normalized.replace(' ', '_')
+    
+    # Remove all special characters except underscores
+    normalized = re.sub(r'[^a-z0-9_]', '', normalized)
+    
+    # Ensure name starts with letter/underscore (valid Python variable)
+    if normalized and normalized[0].isdigit():
+        normalized = f'_{normalized}'
+        
+    return normalized
 
 
 # ----------------------------------------------------------------------
@@ -18362,157 +18380,7 @@ class UnifiedChatGPTAPI(APIView):
         if "file" in request.FILES:
             return self.handle_file_upload(request, request.FILES.getlist("file"))
         return self.handle_chat(request)
-
-        # The code below is never reached unless there's a file in request.FILES.
-
-        user_id = request.data.get("user_id", "default_user")
-        s3 = get_s3_client()
-        glue = get_glue_client()
-        uploaded_files_info = []
-
-        for file in files:
-            print(f"[DEBUG] Processing file: {file.name}")
-            try:
-                if file.name.lower().endswith('.csv'):
-                    df = pd.read_csv(file, low_memory=False, encoding='utf-8', delimiter=',', na_values=['NA', 'N/A', ''])
-                else:
-                    df = pd.read_excel(file, engine='openpyxl')
-
-                if df.empty:
-                    print("[ERROR] File is empty:", file.name)
-                    return Response({"error": f"Uploaded file {file.name} is empty."}, status=status.HTTP_400_BAD_REQUEST)
-
-                if not df.columns.any():
-                    print("[ERROR] File has no columns:", file.name)
-                    return Response({"error": f"Uploaded file {file.name} has no columns."}, status=status.HTTP_400_BAD_REQUEST)
-
-            except pd.errors.ParserError as e:
-                print("[ERROR] CSV parsing error:", e)
-                return Response({"error": f"CSV parsing error for file {file.name}: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception as e:
-                print("[ERROR] Error reading file:", e)
-                return Response({"error": f"Error reading file {file.name}: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
-
-            normalized_columns = [normalize_column_name(c) for c in df.columns]
-            if len(normalized_columns) != len(set(normalized_columns)):
-                print("[ERROR] Duplicate columns after normalization.")
-                return Response({"error": "Duplicate columns detected after normalization."}, status=status.HTTP_400_BAD_REQUEST)
-            if any(col == '' for col in normalized_columns):
-                print("[ERROR] Empty column names after normalization.")
-                return Response({"error": "Some columns have empty names after normalization."}, status=status.HTTP_400_BAD_REQUEST)
-
-            df.columns = normalized_columns
-
-            raw_schema = [{"column_name": col, "data_type": infer_column_dtype(df[col])} for col in df.columns]
-            df = standardize_datetime_columns(df, raw_schema)
-            final_schema = [{"column_name": col, "data_type": infer_column_dtype(df[col])} for col in df.columns]
-
-            has_date_column = any(c["data_type"] == "timestamp" for c in final_schema)
-            possible_date_cols = [c["column_name"] for c in final_schema if c["data_type"] == "timestamp"]
-
-            boolean_columns = [c['column_name'] for c in final_schema if c['data_type'] == 'boolean']
-            replacement_dict = {
-                '1': 'true','0': 'false',
-                'yes':'true','no':'false',
-                't':'true','f':'false',
-                'y':'true','n':'false',
-                'true':'true','false':'false',
-            }
-            for col_name in boolean_columns:
-                df[col_name] = df[col_name].astype(str).str.strip().str.lower().replace(replacement_dict)
-                unexpected_values = [v for v in df[col_name].unique() if v not in ['true','false']]
-                if unexpected_values:
-                    print("[ERROR] Unexpected boolean values:", unexpected_values)
-                    return Response({"error": f"Unexpected boolean values in column {col_name}: {unexpected_values}"}, status=status.HTTP_400_BAD_REQUEST)
-
-            file_name_base, file_extension = os.path.splitext(file.name)
-            file_name_base = file_name_base.lower().replace(' ', '_')
-            unique_id = uuid.uuid4().hex[:8]
-            new_file_name = f"{file_name_base}_{unique_id}{file_extension}"
-            s3_file_name = os.path.splitext(new_file_name)[0] + '.csv'
-            file_key = f"uploads/{unique_id}/{s3_file_name}"
-            print("[DEBUG] Uploading file to S3 at key:", file_key)
-
-            try:
-                with transaction.atomic():
-                    file.seek(0)
-                    file_serializer = UploadedFileSerializer(data={'name': new_file_name, 'file': file})
-                    if file_serializer.is_valid():
-                        file_instance = file_serializer.save()
-
-                        csv_buffer = BytesIO()
-                        df.to_csv(csv_buffer, index=False, encoding='utf-8')
-                        csv_buffer.seek(0)
-                        s3.upload_fileobj(csv_buffer, AWS_STORAGE_BUCKET_NAME, file_key)
-                        print("[DEBUG] S3 upload successful:", file_key)
-                        s3.head_object(Bucket=AWS_STORAGE_BUCKET_NAME, Key=file_key)
-                        file_url = f"s3://{AWS_STORAGE_BUCKET_NAME}/{file_key}"
-                        file_instance.file_url = file_url
-                        file_instance.save()
-
-                        FileSchema.objects.create(file=file_instance, schema=final_schema)
-
-                        file_size_mb = file.size / (1024 * 1024)
-                        self.trigger_glue_update(new_file_name, final_schema, file_key, file_size_mb)
-
-                        uploaded_files_info.append({
-                            'id': file_instance.id,
-                            'name': file_instance.name,
-                            'file_url': file_instance.file_url,
-                            'schema': final_schema,
-                            'file_size_mb': file_size_mb,
-                            'has_date_column': has_date_column,
-                            'date_columns': possible_date_cols,
-                            'suggestions': {
-                                'target_column': suggest_target_column(df, []),
-                                'entity_id_column': suggest_entity_id_column(df),
-                                'feature_columns': [
-                                    c for c in df.columns
-                                    if c not in [
-                                        suggest_entity_id_column(df),
-                                        suggest_target_column(df, [])
-                                    ]
-                                ]
-                            }
-                        })
-                    else:
-                        print("[ERROR] File serializer errors:", file_serializer.errors)
-                        return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-            except ClientError as e:
-                print("[ERROR] AWS ClientError:", e)
-                return Response({'error': f'AWS error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            except Exception as e:
-                print("[ERROR] Unexpected error during file processing:", e)
-                return Response({'error': f'File processing failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        user_schemas[user_id] = uploaded_files_info
-
-        chat_id = request.data.get("chat_id", "")
-        memory_key = f"{user_id}_{chat_id}" if chat_id else user_id
-
-        if memory_key not in user_conversations:
-            conversation_chain = ConversationChain(
-                llm=llm_chatgpt,
-                prompt=prompt_chatgpt,
-                input_key="user_input",
-                memory=ConversationBufferMemory()
-            )
-            user_conversations[memory_key] = conversation_chain
-        else:
-            conversation_chain = user_conversations[memory_key]
-
-        schema_discussion = self.format_schema_message(uploaded_files_info[0])
-        conversation_chain.memory.chat_memory.messages.append(
-            AIMessage(content=schema_discussion)
-        )
-
-        print("[DEBUG] Files uploaded and schema discussion initiated.")
-        return Response({
-            "message": "Files uploaded and processed successfully.",
-            "uploaded_files": uploaded_files_info,
-            "chat_message": schema_discussion
-        }, status=status.HTTP_201_CREATED)
+  
 
     def handle_file_upload(self, request, files: List[Any]):
         user_id = request.data.get("user_id", "default_user")
@@ -19025,7 +18893,7 @@ class UnifiedChatGPTAPI(APIView):
                 table_name=sanitized_table_name,
                 time_horizon=final_time_frame,
                 extra_features=feature_columns,
-                cross_join_limit=1000,
+                # cross_join_limit=1000,
                 # [ADDED CODE FOR FREQUENCY]
                 time_frequency=time_frequency
             )
@@ -19089,6 +18957,381 @@ class UnifiedChatGPTAPI(APIView):
             }
             print("[DEBUG] Returning data to the frontend (non-time-based approach)...", response_data)
             return Response(response_data, status=status.HTTP_200_OK)
+
+    def create_dynamic_time_based_notebook(
+        self,
+        entity_id_column: str,
+        time_column: str,
+        target_column: str,
+        table_name: str,
+        time_horizon: str,
+        extra_features: list,
+        time_frequency: str = None
+    ):
+        """
+        Creates a notebook with 4 steps (similar to Pecan's approach):
+
+        1) Generate daily increments from earliest to latest date, then
+        truncate by user’s time frequency (day/week/month).
+        2) For each entity, keep only times after it first appears.
+        3) Summarize the target within the next X time units after that
+        analysis_time (partial window filter included).
+        4) Join in features from the prior 1 year of data (lookback).
+
+        Updated to ensure we gather *all* monthly snapshots from each
+        entity's earliest date and do not limit to only the last date.
+        """
+        import nbformat
+        import datetime
+        import numpy as np
+        import pandas as pd
+        from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
+
+        # Helper to parse the "6 months", "3 weeks", etc.
+        def parse_time_horizon(th: str):
+            parts = th.strip().split()
+            if len(parts) < 2:
+                return 1, "week"
+            number = parts[0]
+            unit = parts[1].lower().rstrip('s')
+            return int(number), unit
+
+        # Helper to format Timestamps for output
+        def _stringify_timestamps(rows):
+            for row in rows:
+                for k, v in row.items():
+                    if isinstance(v, (pd.Timestamp, datetime.datetime)):
+                        row[k] = v.strftime("%Y-%m-%d %H:%M:%S")
+
+        horizon_number, horizon_unit = parse_time_horizon(time_horizon)
+
+        # Decide the `date_trunc` unit based on time_frequency
+        if time_frequency:
+            freq_lower = time_frequency.strip().lower()
+            if freq_lower.startswith("day"):
+                increment_unit = "day"
+            elif freq_lower.startswith("week"):
+                increment_unit = "week"
+            else:
+                # default to month
+                increment_unit = "month"
+        else:
+            increment_unit = "month"
+
+        nb = new_notebook()
+        cells = []
+
+        ############################################################################
+        # STEP 1: Generate daily increments, then truncate by time_frequency
+        ############################################################################
+        step1_markdown = new_markdown_cell(
+            "### Step 1: Determine relevant timestamps based on Time Frequency"
+        )
+        cells.append(step1_markdown)
+
+        # Removed the small LIMIT entirely so we get *all* relevant timestamps.
+        query_step1 = f"""
+            WITH minmax AS (
+                SELECT
+                    MIN({time_column}) AS min_ts,
+                    MAX({time_column}) AS max_ts
+                FROM {table_name}
+            ),
+            all_relevant_dates AS (
+                SELECT
+                    date_trunc('{increment_unit}', day_in_range) AS relevant_time
+                FROM minmax
+                CROSS JOIN UNNEST(
+                    SEQUENCE(min_ts, max_ts, INTERVAL '1' DAY)
+                ) AS t(day_in_range)
+            )
+            SELECT DISTINCT relevant_time
+            FROM all_relevant_dates
+            ORDER BY relevant_time
+            LIMIT 1000
+            
+        """.strip()
+
+        step1_cell = new_code_cell(query_step1)
+        df_step1 = execute_sql_query(query_step1)
+        step1_cell['execution_count'] = 1
+
+        if df_step1.empty:
+            step1_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={'text/plain': f"No data returned for query:\n{query_step1}"},
+                    execution_count=1
+                )
+            ]
+        else:
+            df_step1 = df_step1.replace([None, float('inf'), float('-inf')], None)
+            result_json = df_step1.to_dict(orient='records')
+            _stringify_timestamps(result_json)
+
+            columns = []
+            for col in df_step1.columns:
+                guessed_type = infer_column_dtype(df_step1[col])
+                columns.append({"name": col, "type": guessed_type})
+
+            text_repr = df_step1.head().to_string(index=False)
+            step1_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={
+                        'application/json': {
+                            'rows': result_json,
+                            'columns': columns
+                        },
+                        'text/plain': text_repr
+                    },
+                    execution_count=1
+                )
+            ]
+        cells.append(step1_cell)
+
+        ############################################################################
+        # STEP 2: For each entity, gather relevant times after earliest record
+        ############################################################################
+        step2_markdown = new_markdown_cell(
+            "### Step 2: For each entity, gather relevant times after earliest record"
+        )
+        cells.append(step2_markdown)
+
+        # Use *all* relevant times in ascending order, no small limit that cuts off earlier months.
+        step1_sub = query_step1.strip().rstrip(';')
+        query_step2 = f"""
+            WITH entity_earliest_time AS (
+                SELECT
+                    {entity_id_column} AS entity_id,
+                    MIN({time_column}) AS first_seen_time
+                FROM {table_name}
+                GROUP BY {entity_id_column}
+            ),
+            relevant_times_in_dataset AS (
+                {step1_sub}
+            )
+            SELECT
+                entity_earliest_time.entity_id,
+                relevant_times_in_dataset.relevant_time AS analysis_time
+            FROM entity_earliest_time
+            JOIN relevant_times_in_dataset
+                ON relevant_times_in_dataset.relevant_time >= entity_earliest_time.first_seen_time
+            ORDER BY analysis_time, entity_id
+            LIMIT 1000
+            
+        """.strip()
+
+        step2_cell = new_code_cell(query_step2)
+        df_step2 = execute_sql_query(query_step2)
+        step2_cell['execution_count'] = 1
+
+        if df_step2.empty:
+            step2_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={'text/plain': f"No data returned for query:\n{query_step2}"},
+                    execution_count=1
+                )
+            ]
+        else:
+            df_step2 = df_step2.replace([None, float('inf'), float('-inf')], None)
+            result_json = df_step2.to_dict(orient='records')
+            _stringify_timestamps(result_json)
+
+            columns = []
+            for col in df_step2.columns:
+                guessed_type = infer_column_dtype(df_step2[col])
+                columns.append({"name": col, "type": guessed_type})
+
+            text_repr = df_step2.head().to_string(index=False)
+            step2_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={
+                        'application/json': {'rows': result_json, 'columns': columns},
+                        'text/plain': text_repr
+                    },
+                    execution_count=1
+                )
+            ]
+        cells.append(step2_cell)
+
+        ############################################################################
+        # STEP 3: Summarize the target measure over the chosen time horizon
+        #         (exclude partial windows after the last full horizon)
+        ############################################################################
+        step3_markdown = new_markdown_cell(
+            "### Step 3: Summarize the target measure over the chosen time horizon (partial window filter)"
+        )
+        cells.append(step3_markdown)
+
+        step2_sub = query_step2.strip().rstrip(';')
+        horizon_label = time_horizon.replace(' ', '_')
+        query_step3 = f"""
+            WITH last_time AS (
+                SELECT MAX({time_column}) AS max_ts
+                FROM {table_name}
+            ),
+            entity_times AS (
+                {step2_sub}
+            )
+            SELECT
+                entity_times.entity_id,
+                entity_times.analysis_time,
+                COALESCE(SUM(tbl.{target_column}), 0) AS target_within_{horizon_label}_after
+            FROM entity_times
+            LEFT JOIN {table_name} AS tbl
+                ON tbl.{entity_id_column} = entity_times.entity_id
+                AND tbl.{time_column} >= entity_times.analysis_time
+                AND tbl.{time_column} < date_add('{horizon_unit}', {horizon_number}, entity_times.analysis_time)
+            WHERE entity_times.analysis_time <= date_add('{horizon_unit}', -{horizon_number}, (SELECT max_ts FROM last_time))
+            GROUP BY
+                entity_times.entity_id,
+                entity_times.analysis_time
+            ORDER BY
+                entity_times.analysis_time,
+                entity_times.entity_id
+                LIMIT 1000
+                
+        """.strip()
+
+#         query_step3 = f""" WITH last_time AS (
+#     SELECT MAX({time_column}) AS max_ts
+#     FROM {table_name}
+# ),
+# entity_times AS (
+#     {step2_sub}
+# )
+# SELECT
+#     entity_times.entity_id,
+#     entity_times.analysis_time,
+#     COALESCE(SUM(tbl.{target_column}), 0) AS target_within_{horizon_label}_after
+# FROM entity_times
+# LEFT JOIN {table_name} AS tbl
+#     ON tbl.{entity_id_column} = entity_times.entity_id
+#     AND tbl.{time_column} >= entity_times.analysis_time
+#     AND tbl.{time_column} < entity_times.analysis_time + INTERVAL '{horizon_number}' {horizon_unit}
+# WHERE entity_times.analysis_time <= (SELECT max_ts - INTERVAL '{horizon_number}' {horizon_unit} FROM last_time)
+# GROUP BY
+#     entity_times.entity_id,
+#     entity_times.analysis_time
+# ORDER BY
+#     entity_times.analysis_time,
+#     entity_times.entity_id
+#     LIMIT 1000;
+# """.strip()
+
+        step3_cell = new_code_cell(query_step3)
+        df_step3 = execute_sql_query(query_step3)
+        step3_cell['execution_count'] = 1
+
+        if df_step3.empty:
+            step3_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={'text/plain': f"No data returned for query:\n{query_step3}"},
+                    execution_count=1
+                )
+            ]
+        else:
+            df_step3 = df_step3.replace([None, float('inf'), float('-inf')], None)
+            result_json = df_step3.to_dict(orient='records')
+            _stringify_timestamps(result_json)
+
+            columns = []
+            for col in df_step3.columns:
+                guessed_type = infer_column_dtype(df_step3[col])
+                columns.append({"name": col, "type": guessed_type})
+
+            text_repr = df_step3.head().to_string(index=False)
+            step3_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={
+                        'application/json': {'rows': result_json, 'columns': columns},
+                        'text/plain': text_repr
+                    },
+                    execution_count=1
+                )
+            ]
+        cells.append(step3_cell)
+
+        ############################################################################
+        # STEP 4: Join additional features (1-year lookback)
+        ############################################################################
+        step4_markdown = new_markdown_cell(
+            "### Step 4: Join additional features (1-year lookback before analysis_time)"
+        )
+        cells.append(step4_markdown)
+
+        if not extra_features:
+            feature_selects = ""
+        else:
+            feature_selects = ",\n    " + ",\n    ".join([f"tbl.{col}" for col in extra_features])
+
+        step3_sub = query_step3.strip().rstrip(';')
+        query_step4 = f"""
+            WITH core_set AS (
+                {step3_sub}
+            )
+            SELECT
+                core_set.entity_id,
+                core_set.analysis_time,
+                core_set.target_within_{horizon_label}_after
+                {feature_selects}
+            FROM core_set
+            INNER JOIN {table_name} AS tbl
+                ON tbl.{entity_id_column} = core_set.entity_id
+                AND tbl.{time_column} < core_set.analysis_time
+                AND tbl.{time_column} >= date_add('year', -1, core_set.analysis_time)
+            ORDER BY
+                core_set.analysis_time,
+                core_set.entity_id
+                LIMIT 1000
+                
+        """.strip()
+
+        step4_cell = new_code_cell(query_step4)
+        df_step4 = execute_sql_query(query_step4)
+        step4_cell['execution_count'] = 1
+
+        if df_step4.empty:
+            step4_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={'text/plain': f"No data returned for query:\n{query_step4}"},
+                    execution_count=1
+                )
+            ]
+        else:
+            df_step4 = df_step4.replace([None, float('inf'), float('-inf')], None)
+            result_json = df_step4.to_dict(orient='records')
+            _stringify_timestamps(result_json)
+
+            columns = []
+            for col in df_step4.columns:
+                guessed_type = infer_column_dtype(df_step4[col])
+                columns.append({"name": col, "type": guessed_type})
+
+            text_repr = df_step4.head().to_string(index=False)
+            step4_cell.outputs = [
+                new_output(
+                    output_type='execute_result',
+                    data={
+                        'application/json': {'rows': result_json, 'columns': columns},
+                        'text/plain': text_repr
+                    },
+                    execution_count=1
+                )
+            ]
+        cells.append(step4_cell)
+
+        nb['cells'] = cells
+        return nb
+
+
+
 
     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str, file_size_mb: float):
         print("[DEBUG] Triggering Glue update for table:", table_name)
@@ -19349,328 +19592,6 @@ class UnifiedChatGPTAPI(APIView):
             return False
 
         return True
-
-    def create_dynamic_time_based_notebook(
-        self,
-        entity_id_column: str,
-        time_column: str,
-        target_column: str,
-        table_name: str,
-        time_horizon: str,
-        extra_features: list,
-        cross_join_limit: int = 1000,
-        # [ADDED CODE FOR FREQUENCY]
-        time_frequency: str = None
-    ):
-        """
-        Creates a notebook with 4 steps:
-        1) Generate date increments (daily, weekly, or monthly) from earliest to latest date.
-        2) For each entity, only keep times after it first appears.
-        3) Summarize the target within the next X time units after that analysis_time.
-        4) Join in the features from the prior 1 year of data.
-        """
-        import nbformat
-        import datetime
-        import numpy as np
-        import pandas as pd
-        from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
-
-        def parse_time_horizon(th: str):
-            parts = th.strip().split()
-            if len(parts) < 2:
-                return 1, "week"
-            number = parts[0]
-            unit = parts[1].lower().rstrip('s')
-            return int(number), unit
-
-        def _stringify_timestamps(rows):
-            for row in rows:
-                for k, v in row.items():
-                    if isinstance(v, (pd.Timestamp, datetime.datetime)):
-                        row[k] = v.strftime("%Y-%m-%d %H:%M:%S")
-
-        horizon_number, horizon_unit = parse_time_horizon(time_horizon)
-
-        # [ADDED CODE FOR FREQUENCY]
-        # Decide whether we do daily, weekly, or monthly increments
-        if time_frequency:
-            freq_lower = time_frequency.strip().lower()
-            if freq_lower.startswith("day"):
-                increment_unit = "day"
-            elif freq_lower.startswith("week"):
-                increment_unit = "week"
-            else:
-                # default to month
-                increment_unit = "month"
-        else:
-            # fallback if user didn't specify
-            increment_unit = "month"
-
-        nb = new_notebook()
-        cells = []
-
-        step1_markdown = new_markdown_cell(
-            "### Step 1: Determine relevant timestamps based on Time Frequency"
-        )
-        cells.append(step1_markdown)
-
-        query_step1 = f"""
-        WITH minmax AS (
-            SELECT
-                MIN({time_column}) AS min_ts,
-                MAX({time_column}) AS max_ts
-            FROM {table_name}
-        ),
-        numbers AS (
-            SELECT row_number() OVER () - 1 AS rn
-            FROM (
-                VALUES {",".join("(1)" for _ in range(cross_join_limit))}
-            ) t(n)
-        )
-        SELECT DISTINCT
-            date_add('{increment_unit}', rn, minmax.min_ts) AS relevant_time
-        FROM minmax
-        JOIN numbers
-            ON date_add('{increment_unit}', rn, minmax.min_ts) <= minmax.max_ts
-        ORDER BY relevant_time
-        LIMIT 10;
-        """.strip()
-
-        step1_cell = new_code_cell(query_step1)
-        df_step1 = execute_sql_query(query_step1)
-        step1_cell['execution_count'] = 1
-
-        if df_step1.empty:
-            step1_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={'text/plain': f"No data returned for query:\n{query_step1}"},
-                    execution_count=1
-                )
-            ]
-        else:
-            df_step1 = df_step1.replace([None, float('inf'), float('-inf')], None)
-            result_json = df_step1.to_dict(orient='records')
-            _stringify_timestamps(result_json)
-
-            columns = []
-            for col in df_step1.columns:
-                guessed_type = infer_column_dtype(df_step1[col])
-                columns.append({"name": col, "type": guessed_type})
-
-            text_repr = df_step1.head().to_string(index=False)
-            step1_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={
-                        'application/json': {
-                            'rows': result_json,
-                            'columns': columns
-                        },
-                        'text/plain': text_repr
-                    },
-                    execution_count=1
-                )
-            ]
-        cells.append(step1_cell)
-
-        step2_markdown = new_markdown_cell(
-            "### Step 2: For each entity, gather relevant times after earliest record"
-        )
-        cells.append(step2_markdown)
-
-        step1_sub = query_step1.strip().rstrip(';')
-        query_step2 = f"""
-        WITH entity_earliest_time AS (
-            SELECT
-                {entity_id_column} AS entity_id,
-                MIN({time_column}) AS first_seen_time
-            FROM {table_name}
-            GROUP BY {entity_id_column}
-        ),
-        relevant_times_in_dataset AS (
-            {step1_sub}
-        )
-        SELECT
-            entity_earliest_time.entity_id,
-            relevant_times_in_dataset.relevant_time AS analysis_time
-        FROM entity_earliest_time
-        JOIN relevant_times_in_dataset
-            ON relevant_times_in_dataset.relevant_time >= entity_earliest_time.first_seen_time
-        ORDER BY analysis_time DESC, entity_id
-        LIMIT 10;
-        """.strip()
-
-        step2_cell = new_code_cell(query_step2)
-        df_step2 = execute_sql_query(query_step2)
-        step2_cell['execution_count'] = 1
-
-        if df_step2.empty:
-            step2_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={'text/plain': f"No data returned for query:\n{query_step2}"},
-                    execution_count=1
-                )
-            ]
-        else:
-            df_step2 = df_step2.replace([None, float('inf'), float('-inf')], None)
-            result_json = df_step2.to_dict(orient='records')
-            _stringify_timestamps(result_json)
-
-            columns = []
-            for col in df_step2.columns:
-                guessed_type = infer_column_dtype(df_step2[col])
-                columns.append({"name": col, "type": guessed_type})
-
-            text_repr = df_step2.head().to_string(index=False)
-            step2_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={
-                        'application/json': {'rows': result_json, 'columns': columns},
-                        'text/plain': text_repr
-                    },
-                    execution_count=1
-                )
-            ]
-        cells.append(step2_cell)
-
-        step3_markdown = new_markdown_cell(
-            "### Step 3: Summarize the target measure over the chosen time horizon"
-        )
-        cells.append(step3_markdown)
-
-        step2_sub = query_step2.strip().rstrip(';')
-        query_step3 = f"""
-        WITH last_time AS (
-            SELECT MAX({time_column}) AS max_ts
-            FROM {table_name}
-        ),
-        entity_times AS (
-            {step2_sub}
-        )
-        SELECT
-            entity_times.entity_id,
-            entity_times.analysis_time,
-            COALESCE(SUM(tbl.{target_column}), 0) AS target_within_{time_horizon.replace(' ', '_')}_after
-        FROM entity_times
-        LEFT JOIN {table_name} AS tbl
-            ON tbl.{entity_id_column} = entity_times.entity_id
-            AND tbl.{time_column} >= entity_times.analysis_time
-            AND tbl.{time_column} < date_add('{horizon_unit}', {horizon_number}, entity_times.analysis_time)
-        WHERE entity_times.analysis_time <= date_add('{horizon_unit}', -{horizon_number}, (SELECT max_ts FROM last_time))
-        GROUP BY
-            entity_times.entity_id,
-            entity_times.analysis_time
-        ORDER BY
-            entity_times.analysis_time DESC,
-            entity_times.entity_id
-        LIMIT 10;
-        """.strip()
-
-        step3_cell = new_code_cell(query_step3)
-        df_step3 = execute_sql_query(query_step3)
-        step3_cell['execution_count'] = 1
-
-        if df_step3.empty:
-            step3_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={'text/plain': f"No data returned for query:\n{query_step3}"},
-                    execution_count=1
-                )
-            ]
-        else:
-            df_step3 = df_step3.replace([None, float('inf'), float('-inf')], None)
-            result_json = df_step3.to_dict(orient='records')
-            _stringify_timestamps(result_json)
-
-            columns = []
-            for col in df_step3.columns:
-                guessed_type = infer_column_dtype(df_step3[col])
-                columns.append({"name": col, "type": guessed_type})
-
-            text_repr = df_step3.head().to_string(index=False)
-            step3_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={
-                        'application/json': {'rows': result_json, 'columns': columns},
-                        'text/plain': text_repr
-                    },
-                    execution_count=1
-                )
-            ]
-        cells.append(step3_cell)
-
-        step4_markdown = new_markdown_cell(
-            "### Step 4: Join additional features (optional, 1-year lookback)"
-        )
-        cells.append(step4_markdown)
-
-        if not extra_features:
-            feature_selects = ""
-        else:
-            feature_selects = ",\n    " + ",\n    ".join([f"tbl.{col}" for col in extra_features])
-
-        step3_sub = query_step3.strip().rstrip(';')
-        query_step4 = f"""
-        WITH core_set AS (
-            {step3_sub}
-        )
-        SELECT
-            core_set.entity_id,
-            core_set.analysis_time,
-            core_set.target_within_{time_horizon.replace(' ', '_')}_after
-            {feature_selects}
-        FROM core_set
-        INNER JOIN {table_name} AS tbl
-            ON tbl.{entity_id_column} = core_set.entity_id
-            AND tbl.{time_column} < core_set.analysis_time
-            AND tbl.{time_column} >= date_add('year', -1, core_set.analysis_time)
-        LIMIT 10;
-        """.strip()
-
-        step4_cell = new_code_cell(query_step4)
-        df_step4 = execute_sql_query(query_step4)
-        step4_cell['execution_count'] = 1
-
-        if df_step4.empty:
-            step4_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={'text/plain': f"No data returned for query:\n{query_step4}"},
-                    execution_count=1
-                )
-            ]
-        else:
-            df_step4 = df_step4.replace([None, float('inf'), float('-inf')], None)
-            result_json = df_step4.to_dict(orient='records')
-            _stringify_timestamps(result_json)
-
-            columns = []
-            for col in df_step4.columns:
-                guessed_type = infer_column_dtype(df_step4[col])
-                columns.append({"name": col, "type": guessed_type})
-
-            text_repr = df_step4.head().to_string(index=False)
-            step4_cell.outputs = [
-                new_output(
-                    output_type='execute_result',
-                    data={
-                        'application/json': {'rows': result_json, 'columns': columns},
-                        'text/plain': text_repr
-                    },
-                    execution_count=1
-                )
-            ]
-        cells.append(step4_cell)
-
-        nb['cells'] = cells
-        return nb
-
-
 class ChatHistoryByUserView(APIView):
     """
     API to retrieve chat history for a specific user.

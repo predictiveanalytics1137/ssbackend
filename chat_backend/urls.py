@@ -39,4 +39,5 @@ urlpatterns = [
     path('api/', include('chat.urls')),  # Chat endpoints
     path('model/', include('result.urls')),
     path('api/auth/', include('accounts.urls')),
+    # path('save-notebooks/', include('save')),  # Save notebooks endpoint
 ]

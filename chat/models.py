@@ -129,3 +129,23 @@ class ChatBackup(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.chat_id}"
 
+
+
+from django.db import models
+
+class Notebook(models.Model):
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    # chat = models.ForeignKey('ChatBackup', on_delete=models.CASCADE)
+    chat = models.CharField(max_length=255)
+    entity_column = models.CharField(max_length=255)
+    target_column = models.CharField(max_length=255)
+    time_column = models.CharField(max_length=255, null=True, blank=True)
+    time_frame = models.CharField(max_length=255, null=True, blank=True)
+    time_frequency = models.CharField(max_length=255, null=True, blank=True)
+    features = models.JSONField()
+    file_url = models.URLField()
+    notebook_json = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Notebook for User {self.user.id}, Chat {self.chat.id}"

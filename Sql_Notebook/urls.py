@@ -14,6 +14,5 @@ from .views import ExecuteSQLView, SaveNotebooksView
 
 urlpatterns = [
     path('execute-sql/', ExecuteSQLView.as_view(), name='execute-sql'),  # SQL execution endpoint
-
     path('save-notebooks/', SaveNotebooksView.as_view(), name='save-notebooks'),  # Save notebooks endpoint
 ]

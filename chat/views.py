@@ -1644,27 +1644,151 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-class NotebookView(APIView):
+# class NotebookView(APIView):
 
+#     def get(self, request):
+#         user_id = request.query_params.get("user_id")
+#         chat_id = request.query_params.get("chat_id")
+
+#         if not user_id or not chat_id:
+#             return Response({"error": "user_id and chat_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+#         try:
+#             # notebooks = Notebook.objects.filter(user_id=user_id, chat__chat_id=chat_id)
+#             notebooks = Notebook.objects.filter(chat    =chat_id, user_id=user_id)
+
+
+#             if not notebooks.exists():
+#                 return Response({"error": "No notebooks found for the given user_id and chat_id."}, status=status.HTTP_404_NOT_FOUND)
+
+#             # Serialize the data
+#             notebook_data = [
+#                 {
+#                     "id": notebook.id,
+#                     "entity_column": notebook.entity_column,
+#                     "target_column": notebook.target_column,
+#                     "time_column": notebook.time_column,
+#                     "time_frame": notebook.time_frame,
+#                     "time_frequency": notebook.time_frequency,
+#                     "features": notebook.features,
+#                     "file_url": notebook.file_url,
+#                     "notebook_json": notebook.notebook_json,
+#                     "created_at": notebook.created_at,
+#                 }
+#                 for notebook in notebooks
+#             ]
+
+#             return Response({"message": "Notebooks retrieved successfully.", "notebooks": notebook_data}, status=status.HTTP_200_OK)
+
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+# from rest_framework.views import APIView
+# from rest_framework.response import Response
+# from rest_framework import status
+
+# class NotebookView(APIView):
+#     def get(self, request):
+#         user_id = request.query_params.get("user_id")
+#         chat_id = request.query_params.get("chat_id")
+
+#         if not user_id and not chat_id:
+#             return Response(
+#                 {"error": "At least one of 'user_id' or 'chat_id' is required."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             # Build query filters dynamically
+#             filters = {}
+#             if user_id:
+#                 filters["user_id"] = user_id
+#             if chat_id:
+#                 filters["chat"] = chat_id
+
+#             # Fetch notebooks based on filters
+#             notebooks = Notebook.objects.filter(**filters)
+
+#             if not notebooks.exists():
+#                 return Response(
+#                     {"error": "No notebooks found for the given criteria."},
+#                     status=status.HTTP_404_NOT_FOUND,
+#                 )
+
+#             # Serialize the data
+#             notebook_data = [
+#                 {
+#                     "id": notebook.id,
+#                     "entity_column": notebook.entity_column,
+#                     "target_column": notebook.target_column,
+#                     "time_column": notebook.time_column,
+#                     "time_frame": notebook.time_frame,
+#                     "time_frequency": notebook.time_frequency,
+#                     "features": notebook.features,
+#                     "file_url": notebook.file_url,
+#                     "notebook_json": notebook.notebook_json,
+#                     "created_at": notebook.created_at,
+#                 }
+#                 for notebook in notebooks
+#             ]
+
+#             return Response(
+#                 {"message": "Notebooks retrieved successfully.", "notebooks": notebook_data},
+#                 status=status.HTTP_200_OK,
+#             )
+
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+class NotebookView(APIView):
     def get(self, request):
         user_id = request.query_params.get("user_id")
         chat_id = request.query_params.get("chat_id")
 
-        if not user_id or not chat_id:
-            return Response({"error": "user_id and chat_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not user_id and not chat_id:
+            return Response(
+                {"error": "At least one of 'user_id' or 'chat_id' is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            # notebooks = Notebook.objects.filter(user_id=user_id, chat__chat_id=chat_id)
-            notebooks = Notebook.objects.filter(chat    =chat_id, user_id=user_id)
+            # Build query filters dynamically
+            filters = {}
+            if user_id:
+                filters["user_id"] = user_id
+            if chat_id:
+                filters["chat"] = chat_id
 
+            # Fetch notebooks based on filters
+            notebooks = Notebook.objects.filter(**filters)
 
             if not notebooks.exists():
-                return Response({"error": "No notebooks found for the given user_id and chat_id."}, status=status.HTTP_404_NOT_FOUND)
+                return Response(
+                    {"error": "No notebooks found for the given criteria."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
             # Serialize the data
             notebook_data = [
                 {
                     "id": notebook.id,
+                    "user_id": notebook.user_id,  # Include user_id
+                    "chat_id": notebook.chat,    # Include chat_id
                     "entity_column": notebook.entity_column,
                     "target_column": notebook.target_column,
                     "time_column": notebook.time_column,
@@ -1678,7 +1802,15 @@ class NotebookView(APIView):
                 for notebook in notebooks
             ]
 
-            return Response({"message": "Notebooks retrieved successfully.", "notebooks": notebook_data}, status=status.HTTP_200_OK)
+            return Response(
+                {
+                    "message": "Notebooks retrieved successfully.",
+                    "user_id": user_id,
+                    # "chat_id": chat_id,
+                    "notebooks": notebook_data,
+                },
+                status=status.HTTP_200_OK,
+            )
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

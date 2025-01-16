@@ -31,7 +31,10 @@
 from django.contrib import admin
 from django.urls import path, include
 
+from chat_backend.views import home
+
 urlpatterns = [
+    path('', home, name='home'),  # Add the home route
     path('admin/', admin.site.urls),
     path('api/', include('Sql_Notebook.urls')),  # Notebook-related endpoints
     path('api/', include('data_pipeline.urls')),  # Data pipeline endpoints

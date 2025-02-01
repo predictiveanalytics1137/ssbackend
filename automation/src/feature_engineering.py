@@ -206,6 +206,163 @@ import featuretools as ft
 
 
 
+# =============================================================================
+# 
+# import featuretools as ft
+# import numpy as np
+# import pandas as pd
+# from src.helper import normalize_column_names
+# from src.logging_config import get_logger
+# 
+# logger = get_logger(__name__)
+# 
+# def feature_engineering(
+#     df, 
+#     target_column=None, 
+#     dataframe_name="main", 
+#     training=True,
+#     feature_defs=None, 
+#     id_column=None
+# ):
+#     """
+#     Performs feature engineering using FeatureTools.
+#     If training=True, it generates new feature definitions;
+#     if training=False, it uses the pre-fitted feature_defs.
+#     """
+# 
+#     try:
+#         # --------------------------------------------------------------------
+#         # 1) Basic Checks
+#         # --------------------------------------------------------------------
+#         if df.shape[0] == 0:
+#             raise ValueError("DataFrame is empty; cannot perform feature engineering.")
+#         
+#         # --------------------------------------------------------------------
+#         # 2) Reset Index to Avoid Mismatch
+#         #    Ensures a 0..(n-1) index for consistent alignment in FeatureTools.
+#         # --------------------------------------------------------------------
+#         df = df.reset_index(drop=True)
+#         df.index.name = "original_index"  # A meaningful index name
+# 
+#         # --------------------------------------------------------------------
+#         # 3) Separate Out Target Column, ID Column
+#         # --------------------------------------------------------------------
+#         target = None
+#         if target_column and target_column in df.columns:
+#             target = df[target_column].copy()
+#             df = df.drop(columns=[target_column])
+#         
+#         id_data = None
+#         if id_column and id_column in df.columns:
+#             id_data = df[id_column].copy()
+#             df = df.drop(columns=[id_column])
+#         
+#         # --------------------------------------------------------------------
+#         # 4) Identify "Binary" Columns
+#         #    - If your prior encoding turned bool -> {0,1}, you can catch them here.
+#         #    - BUT in many pipelines, these columns might become float dtypes (e.g. 0.0, 1.0).
+#         #      If so, you can tweak the check below.
+#         # --------------------------------------------------------------------
+#         potential_binary_cols = []
+#         for col in df.columns:
+#             unique_vals = df[col].dropna().unique()
+#             if len(unique_vals) == 2:
+#                 # For example, {0, 1} or {1.0, 0.0} or {True, False}
+#                 # We'll store them as 'potential' binary columns
+#                 potential_binary_cols.append(col)
+#         
+#         # If you truly want to exclude these from FeatureTools, we drop them now.
+#         # Otherwise, if you want FeatureTools to generate features from them, skip this drop.
+#         non_binary_df = df.drop(columns=potential_binary_cols) if potential_binary_cols else df.copy()
+# 
+#         # --------------------------------------------------------------------
+#         # 5) Create an EntitySet WITHOUT auto indexing
+#         #    make_index=False ensures we keep the DataFrame’s existing index.
+#         # --------------------------------------------------------------------
+#         entity_set = ft.EntitySet(id="entity_set")
+#         entity_set.add_dataframe(
+#             dataframe_name=dataframe_name,
+#             dataframe=non_binary_df,
+#             index=non_binary_df.index.name,  # "original_index"
+#             make_index=False
+#         )
+# 
+#         # --------------------------------------------------------------------
+#         # 6) Run Deep Feature Synthesis or Calculate Feature Matrix
+#         # --------------------------------------------------------------------
+#         if training:
+#             feature_matrix, new_feature_defs = ft.dfs(
+#                 entityset=entity_set,
+#                 target_dataframe_name=dataframe_name,
+#                 agg_primitives=["mean", "sum", "min", "max", "std"],
+#                 trans_primitives=["add_numeric", "subtract_numeric", "divide_numeric"],
+#                 max_depth=1,
+#                 verbose=True
+#             )
+#         else:
+#             if feature_defs is None:
+#                 raise RuntimeError("Feature definitions must be provided for prediction.")
+#             feature_matrix = ft.calculate_feature_matrix(
+#                 features=feature_defs,
+#                 entityset=entity_set,
+#                 verbose=True
+#             )
+#             new_feature_defs = feature_defs
+# 
+#         # Replace inf with NaN, then fill
+#         feature_matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
+#         feature_matrix.fillna(0, inplace=True)
+# 
+#         # Normalize column names
+#         feature_matrix = normalize_column_names(feature_matrix)
+# 
+#         # --------------------------------------------------------------------
+#         # 7) Re-Add Potential Binary Columns
+#         #    Use reindex to match the new FeatureTools index
+#         # --------------------------------------------------------------------
+#         if potential_binary_cols:
+#             # Reindex to align with feature_matrix's index
+#             binary_df = df[potential_binary_cols].reindex(feature_matrix.index)
+#             feature_matrix = pd.concat([feature_matrix, binary_df], axis=1)
+#             logger.info(f"Binary columns re-added: {potential_binary_cols}")
+#         else:
+#             logger.info("No binary columns were detected to add back.")
+# 
+#         # --------------------------------------------------------------------
+#         # 8) Add back Target Column & ID Column
+#         #    Also reindex them to match the feature_matrix index
+#         # --------------------------------------------------------------------
+#         if target is not None:
+#             # Reindex the target to avoid mismatch
+#             target_aligned = target.reindex(feature_matrix.index)
+#             feature_matrix[target_column] = target_aligned
+#         
+#         if id_data is not None:
+#             id_aligned = id_data.reindex(feature_matrix.index)
+#             feature_matrix[id_column] = id_aligned
+# 
+#         # --------------------------------------------------------------------
+#         # 9) Return
+#         # --------------------------------------------------------------------
+#         if training:
+#             return feature_matrix, new_feature_defs
+#         else:
+#             return feature_matrix
+# 
+#     except Exception as e:
+#         logger.error(f"Error in feature_engineering: {e}")
+#         raise
+# 
+# =============================================================================
+
+
+
+
+
+#v3
+
+
+
 
 import featuretools as ft
 import numpy as np
@@ -221,12 +378,13 @@ def feature_engineering(
     dataframe_name="main", 
     training=True,
     feature_defs=None, 
-    id_column=None
+    id_column=None,
+    fixed_binary_cols=None  # New parameter to accept binary columns from training
 ):
     """
     Performs feature engineering using FeatureTools.
-    If training=True, it generates new feature definitions;
-    if training=False, it uses the pre-fitted feature_defs.
+    If training=True, it generates new feature definitions and identifies binary columns;
+    if training=False, it uses the pre-fitted feature_defs and fixed_binary_cols.
     """
 
     try:
@@ -262,14 +420,32 @@ def feature_engineering(
         #    - BUT in many pipelines, these columns might become float dtypes (e.g. 0.0, 1.0).
         #      If so, you can tweak the check below.
         # --------------------------------------------------------------------
-        potential_binary_cols = []
-        for col in df.columns:
-            unique_vals = df[col].dropna().unique()
-            if len(unique_vals) == 2:
-                # For example, {0, 1} or {1.0, 0.0} or {True, False}
-                # We'll store them as 'potential' binary columns
-                potential_binary_cols.append(col)
+        if training:
+            potential_binary_cols = []
+            for col in df.columns:
+                unique_vals = df[col].dropna().unique()
+                if len(unique_vals) == 2:
+                    # For example, {0, 1} or {1.0, 0.0} or {True, False}
+                    # We'll store them as 'potential' binary columns
+                    potential_binary_cols.append(col)
+            logger.info(f"Identified potential binary columns: {potential_binary_cols}")
+        else:
+            if fixed_binary_cols is not None:
+                potential_binary_cols = fixed_binary_cols
+                logger.info(f"Using fixed binary columns from training: {potential_binary_cols}")
+            else:
+                # If not provided, fallback to identifying from test data
+                potential_binary_cols = []
+                for col in df.columns:
+                    unique_vals = df[col].dropna().unique()
+                    if len(unique_vals) == 2:
+                        potential_binary_cols.append(col)
+                logger.warning("Fixed binary columns not provided. Identifying binary columns from test data.")
         
+        # If training, return the list of binary columns
+        if training:
+            # Save the list to pass to test
+            pass  # Will handle later
         # If you truly want to exclude these from FeatureTools, we drop them now.
         # Otherwise, if you want FeatureTools to generate features from them, skip this drop.
         non_binary_df = df.drop(columns=potential_binary_cols) if potential_binary_cols else df.copy()
@@ -326,7 +502,7 @@ def feature_engineering(
             logger.info(f"Binary columns re-added: {potential_binary_cols}")
         else:
             logger.info("No binary columns were detected to add back.")
-
+        
         # --------------------------------------------------------------------
         # 8) Add back Target Column & ID Column
         #    Also reindex them to match the feature_matrix index
@@ -344,7 +520,7 @@ def feature_engineering(
         # 9) Return
         # --------------------------------------------------------------------
         if training:
-            return feature_matrix, new_feature_defs
+            return feature_matrix, new_feature_defs, potential_binary_cols
         else:
             return feature_matrix
 

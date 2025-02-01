@@ -10,6 +10,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.pipeline import train_pipeline
 
 
+
+
 # def fetch_csv_from_s3(s3_path):
 #     print("[DEBUG] fetch_csv_from_s3: Starting to fetch data from S3...")
 #     print(f"[DEBUG] Received S3 path: {s3_path}")
@@ -103,6 +105,9 @@ from io import StringIO
 from src.pipeline import train_pipeline
 from src.logging_config import get_logger
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.pipeline import train_pipeline
+print(sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))))
 logger = get_logger(__name__)
 
 def fetch_csv_from_s3(s3_path):
@@ -142,19 +147,54 @@ def fetch_csv_from_s3(s3_path):
 
 if __name__ == "__main__":
     
+    # data = "s3://pa-documents-storage-bucket/uploads/4a87aeba/Updated_Dataset_with_Entity_Columnn.csv"
+    # data = fetch_csv_from_s3(data)
+
+    #         #best_model, best_params = train_pipeline(data, args.target_column, args.user_id, args.chat_id, args.column_id)
+    # best_model, best_params = train_pipeline(
+    #     data,
+    #     "math_score",       # target_column
+    #     "9938938HHDU",      # user_id
+    #     "IDSH938749",       # chat_id
+    #     "entity"            # column_id
+    # )
+    
+
+    # data_path = "s3://pa-documents-storage-bucket/notebook_saves/9/cd951bec-f12b-42d7-8f28-db1a9b8651cf/Synthetic_Revenue_Dataset.csv"
+    # data = fetch_csv_from_s3(data_path)
+
+    # non time based
     data = "s3://pa-documents-storage-bucket/uploads/4a87aeba/Updated_Dataset_with_Entity_Columnn.csv"
     data = fetch_csv_from_s3(data)
 
-            #best_model, best_params = train_pipeline(data, args.target_column, args.user_id, args.chat_id, args.column_id)
+    # Example usage:
+    # best_model, best_params = train_pipeline(
+    #     df=data,
+    #     target_column="next_month_revenue",
+    #     user_id="9938938HHDU",
+    #     chat_id="IDSH938749",
+    #     column_id="dealer_id",  # This is your 'multivariate entity' or grouping column
+    #     time_column="sampled_date",  # <--- NEW: specify the time column here
+    #     freq="ME",                # <--- NEW: resample frequency (daily, weekly, etc.)
+    #     forecast_horizon=1,      # <--- how many steps ahead you want to forecast
+    #     use_time_series=True     # <--- tells the pipeline to do time-series preprocessing
+    # )
+
+
+    # Example usage for non-time-series dataset:
     best_model, best_params = train_pipeline(
-        data,
-        "math_score",       # target_column
-        "9938938HHDU",      # user_id
-        "IDSH938749",       # chat_id
-        "entity"            # column_id
+        df=data,
+        target_column="math_score",
+        user_id="9938938HHDU",
+        chat_id="IDSH938749",
+        column_id="entity",  # This is your 'multivariate entity' or grouping column
+        time_column=None,        # Remove time column for non-time-series
+        freq=None,               # No need for frequency in non-time-series
+        forecast_horizon=0,      # No forecasting needed for regular ML tasks
+        use_time_series=False    # Explicitly set to False
     )
-    
-    
+
+
     
     
     

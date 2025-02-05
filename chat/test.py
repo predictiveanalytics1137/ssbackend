@@ -1,8 +1,5 @@
 
 
-
-
-
 import os
 import uuid
 import datetime
@@ -45,16 +42,9 @@ ATHENA_SCHEMA_NAME = 'pa_user_datafiles_db'  # Adjust as needed
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai.api_key = OPENAI_API_KEY
 
-
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
-
 # Initialize the ChatOpenAI model
 llm_chatgpt = ChatOpenAI(
-    model="gpt-4o-mini",
+    model="gpt-3.5-turbo-16k",
     temperature=0,
     openai_api_key=OPENAI_API_KEY,
 )
@@ -66,26 +56,27 @@ user_confirmations = {}
 user_notebook_flags = {}
 user_notebooks = {}
 
-
-SYSTEM_INSTRUCTIONS = (
-    "You are a highly intelligent and helpful PACX AI assistant. Your responses should be clear and concise. "
-    "Assist the user in forming the predictive question and any corrections they provide. Reflect the confirmed or "
-    "corrected schema back to the user before proceeding, asking one question at a time.\n\n"
-    "Steps:\n"
-    "1. Discuss the subject they want to predict.\n"
-    "2. Confirm the target value they want to predict.\n"
-    "3. Check if there's a specific time frame for the prediction.\n"
-    "4. Determine whether the prediction should occur on a recurring basis (e.g., daily, weekly, monthly) or after a specific event.\n"
-    "5. Reference the dataset schema if available; if not, ask to upload it.\n"
-    "6. Once all necessary information is confirmed, provide a summary and let the user know they can generate the notebook."
+# Prompt template for ChatGPT
+prompt_chatgpt = PromptTemplate(
+    input_variables=["history", "user_input"],
+    template=(
+        "You are a highly intelligent and helpful AI assistant. Your "
+        "responses should be clear and concise. Assist the user in confirming "
+        "the dataset schema and any corrections they provide. Reflect the "
+        "confirmed or corrected schema back to the user before proceeding.\n\n"
+        "Steps:\n"
+        "1. Discuss the subject they want to predict.\n"
+        "2. Confirm the target value they want to predict.\n"
+        "3. Check if there's a specific time frame for the prediction.\n"
+        "4. Reference the dataset schema if available.\n"
+        "5. Once you have confirmed all necessary information with the user, "
+        "provide a summary of the inputs and let them know they can generate the notebook.\n\n"
+        "Conversation history:\n{history}\n"
+        "User input:\n{user_input}\n"
+        "Assistant:"
+    ),
 )
 
-chat_prompt = ChatPromptTemplate.from_messages([
-    SystemMessagePromptTemplate.from_template(SYSTEM_INSTRUCTIONS),
-    HumanMessagePromptTemplate.from_template(
-        "Conversation so far:\n{history}\nUser input:\n{user_input}"
-    )
-])
 
 def get_s3_client():
     print("[DEBUG] Creating S3 client...")
@@ -124,30 +115,45 @@ def execute_sql_query(query: str) -> pd.DataFrame:
         print(f"[ERROR] Failed to execute query: {query}, Error: {str(e)}")
         return pd.DataFrame()
 
+def normalize_column_name(col_name: str) -> str:
+    return col_name.strip().lower().replace(' ', '_')
+
 import re
 
 def normalize_column_name(col_name: str) -> str:
     # Convert to lowercase and trim whitespace
     normalized = col_name.strip().lower()
+    
     # Replace spaces with underscores
     normalized = normalized.replace(' ', '_')
+    
     # Remove all special characters except underscores
     normalized = re.sub(r'[^a-z0-9_]', '', normalized)
+    
     # Ensure name starts with letter/underscore (valid Python variable)
     if normalized and normalized[0].isdigit():
         normalized = f'_{normalized}'
+        
     return normalized
 
+
+# ----------------------------------------------------------------------
+# Flexible date/time detection
+# ----------------------------------------------------------------------
 def infer_column_dtype(series: pd.Series, threshold: float = 0.8) -> str:
     """
     Attempt to infer the most likely data type of a pandas Series.
-    This uses 'errors=coerce' for date parsing + threshold-based classification.
+    This version uses 'errors=coerce' for date parsing to avoid skipping rows
+    and a threshold-based approach to classify a column as timestamp.
     """
+
+    # Drop NA, convert to string, strip whitespace
     series = series.dropna().astype(str).str.strip()
     if series.empty:
         return "string"
 
-    # Attempt #1: flexible parse toggling dayfirst
+    # Attempt #1: flexible parse toggling dayfirst, errors='coerce'
+    # If at least `threshold` fraction of non-null values are valid dates, call it timestamp.
     for dayfirst_val in [False, True]:
         dt_series = pd.to_datetime(series, dayfirst=dayfirst_val, errors='coerce')
         valid_count = dt_series.notnull().sum()
@@ -155,7 +161,7 @@ def infer_column_dtype(series: pd.Series, threshold: float = 0.8) -> str:
         if total_count > 0 and (valid_count / total_count) >= threshold:
             return "timestamp"
 
-    # Attempt #2: known date formats
+    # Attempt #2: known common formats
     known_formats = ["%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%Y"]
     for fmt in known_formats:
         dt_series = pd.to_datetime(series, format=fmt, errors='coerce')
@@ -164,15 +170,16 @@ def infer_column_dtype(series: pd.Series, threshold: float = 0.8) -> str:
         if total_count > 0 and (valid_count / total_count) >= threshold:
             return "timestamp"
 
-    # Boolean check
+    # Check for boolean
     boolean_values = {'true', 'false', '1', '0', 'yes', 'no', 't', 'f', 'y', 'n'}
     unique_values = set(series.str.lower().unique())
     if unique_values.issubset(boolean_values):
         return "boolean"
 
-    # Integer check
+    # Check integer
     try:
         int_series = pd.to_numeric(series, errors='raise')
+        # if all integer (no fraction), decide between int and bigint
         if (int_series % 1 == 0).all():
             int_min = int_series.min()
             int_max = int_series.max()
@@ -183,7 +190,7 @@ def infer_column_dtype(series: pd.Series, threshold: float = 0.8) -> str:
     except ValueError:
         pass
 
-    # Double check
+    # Check double
     try:
         pd.to_numeric(series, errors='raise', downcast='float')
         return "double"
@@ -192,9 +199,12 @@ def infer_column_dtype(series: pd.Series, threshold: float = 0.8) -> str:
 
     return "string"
 
+
 def standardize_datetime_columns(df: pd.DataFrame, schema: list) -> pd.DataFrame:
     """
-    For columns recognized as 'timestamp', convert them to a standard ISO datetime string.
+    Given a DataFrame and a schema (list of {'column_name', 'data_type'}),
+    convert columns recognized as 'timestamp' into a standard ISO datetime string:
+    'YYYY-MM-DD HH:MM:SS'.
     """
     for colinfo in schema:
         if colinfo["data_type"] == "timestamp":
@@ -207,8 +217,10 @@ def standardize_datetime_columns(df: pd.DataFrame, schema: list) -> pd.DataFrame
                 print(f"[WARNING] Could not standardize date column '{col_name}': {str(e)}")
     return df
 
+
 def suggest_target_column(df: pd.DataFrame, chat_history: List[Any]) -> Any:
     return df.columns[-1]
+
 
 def suggest_entity_id_column(df: pd.DataFrame) -> Any:
     likely_id_columns = [col for col in df.columns if "id" in col.lower()]
@@ -224,39 +236,64 @@ def parse_user_adjustments(user_input, uploaded_file_info):
     print("[DEBUG] Parsing user adjustments...")
     columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
     normalized_columns = [normalize_column_name(c) for c in columns_list]
-    user_input = user_input.strip().lower()
+    print("[DEBUG] Current columns_list:", columns_list)
+    print("[DEBUG] Normalized columns_list:", normalized_columns)
+    print("[DEBUG] User input:", user_input)
 
-    pattern = re.compile(
-        r'(target|entity\s*id|time\s*column|time\s*frame|time\s*freq)\D*(\b\w+\b)',
-        re.IGNORECASE
-    )
-    
     adjustments = {}
-    matches = pattern.findall(user_input)
-    for key_phrase, value in matches:
-        key = key_phrase.lower().strip()
-        val_norm = normalize_column_name(value)
-        
-        if 'target' in key:
-            if val_norm in normalized_columns:
-                match_col = columns_list[normalized_columns.index(val_norm)]
-                adjustments['target_column'] = match_col
-        elif 'entity' in key and 'id' in key:
-            if val_norm in normalized_columns:
-                match_col = columns_list[normalized_columns.index(val_norm)]
-                adjustments['entity_id_column'] = match_col
-        elif 'time' in key and 'column' in key:
-            if val_norm in normalized_columns:
-                adjustments['time_column'] = columns_list[normalized_columns.index(val_norm)]
-        elif 'time' in key:
-            if 'frame' in key:
+    lines = user_input.strip().split(',')
+    for line in lines:
+        if ':' in line:
+            key, value = line.split(':', 1)
+            key = key.strip().lower()
+            value = value.strip()
+            val_norm = normalize_column_name(value)
+
+            if 'entity' in key and 'column' in key:
+                if val_norm in normalized_columns:
+                    match_col = columns_list[normalized_columns.index(val_norm)]
+                    adjustments['entity_id_column'] = match_col
+                else:
+                    print("[DEBUG] Entity ID column not found:", val_norm)
+
+            elif 'target' in key and 'column' in key:
+                if val_norm in normalized_columns:
+                    match_col = columns_list[normalized_columns.index(val_norm)]
+                    adjustments['target_column'] = match_col
+                else:
+                    print("[DEBUG] Target column not found:", val_norm)
+
+            elif 'time' in key and 'column' in key:
+                if val_norm in normalized_columns:
+                    match_col = columns_list[normalized_columns.index(val_norm)]
+                    adjustments['time_column'] = match_col
+                else:
+                    print("[DEBUG] Time column not found:", val_norm)
+
+            elif 'time' in key and 'frame' in key:
                 adjustments['time_frame'] = value
-            elif 'freq' in key:
+
+            # [ADDED CODE FOR FREQUENCY]
+            elif 'time' in key and 'frequency' in key:
+                # e.g. "Time Frequency: monthly"
                 adjustments['time_frequency'] = value
 
-    return adjustments or None
+    # If entity/target => auto-build features
+    if adjustments.get('entity_id_column') and adjustments.get('target_column'):
+        entity_id = adjustments['entity_id_column']
+        target_col = adjustments['target_column']
+        feature_columns = [
+            {'column_name': col} for col in columns_list
+            if col not in [entity_id, target_col]
+        ]
+        adjustments['feature_columns'] = feature_columns
+        print("[DEBUG] Adjustments found:", adjustments)
+
+    return adjustments if adjustments else None
+
 
 class UnifiedChatGPTAPI(APIView):
+    # import pdb; pdb.set_trace()
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
@@ -269,6 +306,7 @@ class UnifiedChatGPTAPI(APIView):
             return self.handle_file_upload(request, request.FILES.getlist("file"))
         return self.handle_chat(request)
   
+
     def handle_file_upload(self, request, files: List[Any]):
         user_id = request.data.get("user_id", "default_user")
         s3 = get_s3_client()
@@ -294,10 +332,12 @@ class UnifiedChatGPTAPI(APIView):
                     print("[ERROR] File is empty:", file.name)
                     return Response({"error": f"Uploaded file {file.name} is empty."}, 
                                     status=status.HTTP_400_BAD_REQUEST)
+
                 if not df.columns.any():
                     print("[ERROR] File has no columns:", file.name)
                     return Response({"error": f"Uploaded file {file.name} has no columns."}, 
                                     status=status.HTTP_400_BAD_REQUEST)
+
             except pd.errors.ParserError as e:
                 print("[ERROR] CSV parsing error:", e)
                 return Response({"error": f"CSV parsing error for file {file.name}: {str(e)}"}, 
@@ -356,6 +396,7 @@ class UnifiedChatGPTAPI(APIView):
                     file_serializer = UploadedFileSerializer(data={'name': new_file_name, 'file': file})
                     if file_serializer.is_valid():
                         file_instance = file_serializer.save()
+
                         csv_buffer = BytesIO()
                         df.to_csv(csv_buffer, index=False, encoding='utf-8')
                         csv_buffer.seek(0)
@@ -394,6 +435,7 @@ class UnifiedChatGPTAPI(APIView):
                     else:
                         print("[ERROR] File serializer errors:", file_serializer.errors)
                         return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
             except ClientError as e:
                 print("[ERROR] AWS ClientError:", e)
                 return Response({'error': f'AWS error: {str(e)}'}, 
@@ -411,7 +453,7 @@ class UnifiedChatGPTAPI(APIView):
         if memory_key not in user_conversations:
             conversation_chain = ConversationChain(
                 llm=llm_chatgpt,
-                prompt=chat_prompt,
+                prompt=prompt_chatgpt,
                 input_key="user_input",
                 memory=ConversationBufferMemory()
             )
@@ -430,7 +472,7 @@ class UnifiedChatGPTAPI(APIView):
             "uploaded_files": uploaded_files_info,
             "chat_message": schema_discussion
         }, status=status.HTTP_201_CREATED)
-    
+
     def handle_chat(self, request):
         user_input = request.data.get("message", "").strip()
         user_id = request.data.get("user_id", "default_user")
@@ -439,17 +481,17 @@ class UnifiedChatGPTAPI(APIView):
         if not user_input:
             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Ensure the user exists
+        # Ensure user exists
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # If no chat_id, create a new chat session
+        # If no chat_id => create a new one
         if not chat_id:
             chat_id = str(uuid.uuid4())
-            chat_title = user_input[:50]
             print(f"[DEBUG] New chat created with chat_id: {chat_id}")
+            chat_title = user_input[:50]
             print(f"[DEBUG] New chat title: {chat_title}")
 
             ChatBackup.objects.create(
@@ -459,7 +501,6 @@ class UnifiedChatGPTAPI(APIView):
                 messages=[]
             )
 
-        # Retrieve or create the chat backup instance
         chat_obj, created = ChatBackup.objects.get_or_create(
             user=user, chat_id=chat_id,
             defaults={"title": user_input[:50], "messages": []}
@@ -467,10 +508,10 @@ class UnifiedChatGPTAPI(APIView):
 
         memory_key = f"{user_id}_{chat_id}"
 
-        # If conversation chain is missing for this chat, restore from ChatBackup
+        # If conversation chain missing, restore from ChatBackup
         if memory_key not in user_conversations:
             print(f"[DEBUG] Restoring memory for chat_id: {chat_id}")
-            restored_memory = ConversationBufferMemory(return_messages=True)
+            restored_memory = ConversationBufferMemory()
             for msg in chat_obj.messages:
                 sender = msg["sender"]
                 text = msg["text"]
@@ -481,7 +522,7 @@ class UnifiedChatGPTAPI(APIView):
 
             user_conversations[memory_key] = ConversationChain(
                 llm=llm_chatgpt,
-                prompt=chat_prompt,
+                prompt=prompt_chatgpt,
                 input_key="user_input",
                 memory=restored_memory
             )
@@ -489,38 +530,24 @@ class UnifiedChatGPTAPI(APIView):
         conversation_chain = user_conversations[memory_key]
 
         show_generate_notebook = False
-        # [ADDED for final confirmation fix] — We'll see if user is confirming schema
         confirmation_response, confirmed_flag = self.process_schema_confirmation(user_input, user_id)
 
         if confirmed_flag:
-            # By default we consider "confirmed" => partial or final
             assistant_response = confirmation_response
-
-            # [ADDED for final confirmation fix]: Check if all_confirmed is true
-            conf = user_confirmations.get(user_id, {})
-            if conf.get("all_confirmed", False):
-                # If everything truly confirmed => show notebook button
-                show_generate_notebook = True
-            else:
-                # Partial step => still not final
-                show_generate_notebook = False
+            show_generate_notebook = True
         else:
-            # If process_schema_confirmation didn't handle it,
-            # we run the conversation chain
             assistant_response = conversation_chain.run(user_input=user_input)
-            show_generate_notebook = False
 
-        # Save the conversation messages to DB
-        timestamp = datetime.datetime.now().isoformat()
+        # Save to DB
         chat_obj.messages.append({
             "sender": "user",
             "text": user_input,
-            "timestamp": timestamp
+            "timestamp": datetime.datetime.now().isoformat()
         })
         chat_obj.messages.append({
             "sender": "assistant",
             "text": assistant_response,
-            "timestamp": timestamp
+            "timestamp": datetime.datetime.now().isoformat()
         })
         chat_obj.save()
 
@@ -529,9 +556,10 @@ class UnifiedChatGPTAPI(APIView):
             "chat_id": chat_id,
             "show_generate_notebook": show_generate_notebook
         })
-    
+
     def process_schema_confirmation(self, user_input, user_id):
         print("[DEBUG] Processing schema confirmation for user:", user_id)
+
         if user_id not in user_schemas or not user_schemas[user_id]:
             return ("", False)
 
@@ -540,78 +568,68 @@ class UnifiedChatGPTAPI(APIView):
         has_date_column = uploaded_file_info.get('has_date_column', False)
         date_cols = uploaded_file_info.get('date_columns', [])
 
-        # If no confirmation record yet, initialize
-        if user_id not in user_confirmations:
+        if user_input.lower() == 'yes':
+            print("[DEBUG] User confirmed suggested schema.")
             user_confirmations[user_id] = {
                 'entity_id_column': suggestions['entity_id_column'],
                 'target_column': suggestions['target_column'],
                 'feature_columns': [{'column_name': col} for col in suggestions['feature_columns']],
                 'time_column': date_cols[0] if (has_date_column and len(date_cols) == 1) else None,
                 'time_frame': None,
-                'time_frequency': None,
-                'step': 1,
-                'all_confirmed': False  # [ADDED for final confirmation fix]
+                # [ADDED CODE FOR FREQUENCY] - Initialize to None
+                'time_frequency': None
             }
 
-        conf = user_confirmations[user_id]
+            assistant_response = (
+                f"Great! You've confirmed the schema for '{uploaded_file_info['name']}':\n\n"
+                f"- Entity ID Column: {suggestions['entity_id_column']}\n"
+                f"- Target Column: {suggestions['target_column']}\n"
+                f"- Feature Columns: {', '.join(suggestions['feature_columns'])}\n"
+            )
 
-        # [ADDED for final confirmation fix]: If we've already got all_confirmed, do nothing
-        if conf.get('all_confirmed'):
-            # Already finalized. Return an empty string or a short reminder.
-            # We'll treat it as "confirmed" so handle_chat won't do chain
-            return ("All columns are already confirmed. You can generate the notebook now!", True)
-
-        # Check user input => "yes" or corrections
-        if user_input.lower() == 'yes':
-            if conf.get('step', 1) == 1:
-                conf['step'] = 2
-                user_confirmations[user_id] = conf
-                return (
-                    f"Great! You've confirmed the target column as '{conf['target_column']}'.\n"
-                    f"Next, please confirm the Entity ID Column. Suggested: '{conf['entity_id_column']}'.",
-                    True
+            if has_date_column:
+                if len(date_cols) == 1:
+                    assistant_response += f"- Time Column: {date_cols[0]}\n\n"
+                    assistant_response += (
+                        "You have a time-based dataset. We'll use the single detected date column.\n"
+                        "Now please specify the Time Frame if you'd like, e.g. 'Time Frame: 1 WEEK'.\n"
+                        "Or you can proceed to generate the notebook."
+                    )
+                else:
+                    assistant_response += (
+                        "\nWe detected multiple date columns in your dataset. Please specify the Time Column:\n"
+                        f"{date_cols}\n\n"
+                        "Example: 'Time Column: <column_name>'\n"
+                        "Then also specify the Time Frame if needed, e.g. 'Time Frame: 2 WEEKS'."
+                    )
+            else:
+                assistant_response += (
+                    "\nNo date column detected. We'll proceed with a non-time-based approach unless you specify otherwise.\n"
                 )
-            elif conf.get('step') == 2:
-                conf['step'] = 3
-                user_confirmations[user_id] = conf
-                return (
-                    f"Great! You've confirmed the Entity ID Column as '{conf['entity_id_column']}'.\n"
-                    f"Next, please confirm the Feature Columns: "
-                    f"{', '.join([col['column_name'] for col in conf.get('feature_columns', [])])}.",
-                    True
-                )
-            elif conf.get('step') == 3:
-                # [ADDED for final confirmation fix] => Mark all_confirmed = True and build final summary
-                conf['all_confirmed'] = True
-                final_msg = self.build_final_confirmation_msg(conf, has_date_column)
-                user_confirmations[user_id] = conf
-                return (final_msg, True)
+            return (assistant_response, True)
 
-        # If user typed corrections
+        # If not simple "yes", parse user adjustments
         adjusted_columns = parse_user_adjustments(user_input, uploaded_file_info)
         if adjusted_columns:
-            existing_conf = user_confirmations.get(user_id, {})
-            # Overwrite or create fields
-            if 'target_column' in adjusted_columns:
-                existing_conf['target_column'] = adjusted_columns['target_column']
-                schema_cols = [
-                    normalize_column_name(col_info['column_name'])
-                    for col_info in uploaded_file_info['schema']
-                ]
-                if normalize_column_name(existing_conf['target_column']) not in schema_cols:
-                    response = (
-                        f"Your provided target column '{existing_conf['target_column']}' is not in the dataset. "
-                        f"Suggested target column is '{suggestions['target_column']}'. Please confirm."
-                    )
-                    existing_conf['target_column'] = suggestions['target_column']
-                    user_confirmations[user_id] = existing_conf
-                    return (response, True)
-                else:
-                    existing_conf['step'] = 2
+            existing_conf = user_confirmations.get(user_id, {
+                'entity_id_column': suggestions['entity_id_column'],
+                'target_column': suggestions['target_column'],
+                'feature_columns': [{'column_name': c} for c in suggestions['feature_columns']],
+                'time_column': None,
+                'time_frame': None,
+                # [ADDED CODE FOR FREQUENCY]
+                'time_frequency': None
+            })
 
             if 'entity_id_column' in adjusted_columns:
                 existing_conf['entity_id_column'] = adjusted_columns['entity_id_column']
-                existing_conf['step'] = 3
+            if 'target_column' in adjusted_columns:
+                existing_conf['target_column'] = adjusted_columns['target_column']
+                columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
+                entity_id_col = existing_conf['entity_id_column']
+                target_col = existing_conf['target_column']
+                feature_names = [c for c in columns_list if c not in [entity_id_col, target_col]]
+                existing_conf['feature_columns'] = [{'column_name': c} for c in feature_names]
 
             if 'time_column' in adjusted_columns:
                 if adjusted_columns['time_column'] in date_cols:
@@ -621,94 +639,59 @@ class UnifiedChatGPTAPI(APIView):
 
             if 'time_frame' in adjusted_columns:
                 existing_conf['time_frame'] = adjusted_columns['time_frame']
+
+            # [ADDED CODE FOR FREQUENCY]
             if 'time_frequency' in adjusted_columns:
                 existing_conf['time_frequency'] = adjusted_columns['time_frequency']
 
             user_confirmations[user_id] = existing_conf
 
-            # Now see if everything is complete => if so, set all_confirmed True
-            if existing_conf['step'] >= 3:
-                # Check if user truly has all columns set (time_column only if needed)
-                # We'll consider "has_date_column => require time_column"
-                if existing_conf.get('target_column') and existing_conf.get('entity_id_column'):
-                    if not has_date_column or existing_conf.get('time_column'):
-                        existing_conf['all_confirmed'] = True
-                        final_msg = self.build_final_confirmation_msg(existing_conf, has_date_column)
-                        user_confirmations[user_id] = existing_conf
-                        return (final_msg, True)
-
-            # Otherwise, partial summary
             entity_id_col = existing_conf['entity_id_column']
             target_col = existing_conf['target_column']
-            feature_names = [obj['column_name'] for obj in existing_conf['feature_columns']]
+            feature_col_objs = existing_conf['feature_columns']
+            feature_names = [obj['column_name'] for obj in feature_col_objs]
             time_col = existing_conf.get('time_column', None)
             time_frame = existing_conf.get('time_frame', None)
-            time_freq = existing_conf.get('time_frequency', None)
+            # [ADDED CODE FOR FREQUENCY]
+            time_frequency = existing_conf.get('time_frequency', None)
 
-            partial_msg = (
-                f"Thanks for the corrections! The updated schema is now:\n\n"
+            assistant_response = (
+                f"Thanks for the corrections! The updated schema for '{uploaded_file_info['name']}' is:\n\n"
                 f"- Entity ID Column: {entity_id_col}\n"
                 f"- Target Column: {target_col}\n"
                 f"- Feature Columns: {', '.join(feature_names) if feature_names else 'None'}\n"
             )
             if has_date_column:
                 if time_col:
-                    partial_msg += f"- Time Column: {time_col}\n"
+                    assistant_response += f"- Time Column: {time_col}\n"
                     if time_frame:
-                        partial_msg += f"- Time Frame: {time_frame}\n"
-                    if time_freq:
-                        partial_msg += f"- Time Frequency: {time_freq}\n"
+                        assistant_response += f"- Time Frame: {time_frame}\n"
+                    # [ADDED CODE FOR FREQUENCY]
+                    if time_frequency:
+                        assistant_response += f"- Time Frequency: {time_frequency}\n"
+
                     if time_frame:
-                        partial_msg += "\nTime-based approach confirmed. You can proceed to generate the notebook."
+                        assistant_response += (
+                            "\nTime-based approach is now fully confirmed. You can proceed to generate the notebook."
+                        )
                     else:
-                        partial_msg += (
-                            "\nWe have the date column set, but please specify Time Frame, e.g. 'Time Frame: 3 MONTHS'."
+                        assistant_response += (
+                            "\nWe have the date column now. Please also specify the Time Frame in the format 'Time Frame: <X>' if you'd like a time-based window.\n"
+                            "Or proceed to generate a partial time-based approach."
                         )
                 else:
-                    partial_msg += (
+                    assistant_response += (
                         "\nWe detected a date column, but you haven't specified which to use yet.\n"
                         f"Available date columns: {date_cols}\n"
-                        "Please provide it like 'Time Column: <column_name>'."
+                        "Please provide the time column in the format: 'Time Column: <column_name>'.\n"
+                        "Also optionally specify 'Time Frame: <X>'."
                     )
             else:
-                partial_msg += "\nNo date column found; proceeding with a non-time-based approach."
-            return (partial_msg, True)
+                assistant_response += "\nNo date column found, so we'll proceed non-time-based."
 
-        # If nothing changed and not a "yes", just return no message
+            return (assistant_response, True)
+
         return ("", False)
-
-    # [ADDED for final confirmation fix]: Helper to build final summary
-    def build_final_confirmation_msg(self, conf, has_date_column: bool):
-        """
-        Once all columns are known or step=3 is done, produce final summary
-        so the user can generate the notebook.
-        """
-        entity_id_col = conf.get('entity_id_column')
-        target_col = conf.get('target_column')
-        feature_cols = [obj['column_name'] for obj in conf.get('feature_columns', [])]
-        time_col = conf.get('time_column')
-        time_frame = conf.get('time_frame')
-        time_freq = conf.get('time_frequency')
-
-        final_msg = (
-            "Great! Here’s the final summary of your prediction setup:\n\n"
-            f"- **Entity ID Column:** {entity_id_col}\n"
-            f"- **Target Column:** {target_col}\n"
-        )
-        if has_date_column:
-            final_msg += f"- **Time Column:** {time_col if time_col else '(none)'}\n"
-            final_msg += f"- **Time Frame:** {time_frame if time_frame else '(none)'}\n"
-            final_msg += f"- **Time Frequency:** {time_freq if time_freq else '(none)'}\n"
-        if feature_cols:
-            final_msg += f"- **Feature Columns:** {', '.join(feature_cols)}\n\n"
-        else:
-            final_msg += "- **Feature Columns:** (none)\n\n"
-
-        final_msg += (
-            "You can now generate the notebook with these final settings. "
-            "If you need any further adjustments, feel free to let me know!"
-        )
-        return final_msg
 
     def reset_conversation(self, request):
         user_id = request.data.get("user_id", "default_user")
@@ -746,7 +729,7 @@ class UnifiedChatGPTAPI(APIView):
                 schema_text += (
                     f"We detected a single date column: {date_cols[0]}.\n"
                     "We'll use it for time-based modeling unless you specify otherwise.\n"
-                    "You can also specify a 'Time Frame: <X>' (e.g., 'Time Frame: 1 WEEK') or 'Time Frequency: <daily|weekly|monthly>'.\n\n"
+                    "You can also specify a 'Time Frame: <X>' (e.g., 'Time Frame: 1 WEEK') or a 'Time Frequency: <daily|weekly|monthly>' for how to increment.\n\n"
                 )
             elif len(date_cols) > 1:
                 schema_text += (
@@ -802,6 +785,7 @@ class UnifiedChatGPTAPI(APIView):
         feature_columns = [col['column_name'] for col in confirmation.get('feature_columns', [])]
         time_column = confirmation.get('time_column', None)
         time_frame = confirmation.get('time_frame', None)
+        # [ADDED CODE FOR FREQUENCY]
         time_frequency = confirmation.get('time_frequency', None)
 
         if user_id in user_schemas:
@@ -835,11 +819,14 @@ class UnifiedChatGPTAPI(APIView):
                 table_name=sanitized_table_name,
                 time_horizon=final_time_frame,
                 extra_features=feature_columns,
+                # cross_join_limit=1000,
+                # [ADDED CODE FOR FREQUENCY]
                 time_frequency=time_frequency
             )
             notebook_sanitized = self.sanitize_notebook(final_notebook)
             notebook_json = nbformat.writes(notebook_sanitized, version=4)
 
+            # Save to database
             notebook = Notebook.objects.create(
                 user=user,
                 chat=chat_id,
@@ -856,6 +843,21 @@ class UnifiedChatGPTAPI(APIView):
             user_notebooks[user_id] = {
                 'time_based_notebook': notebook_json
             }
+            # response_data = {
+            #     "message": "Notebooks generated successfully (time-based).",
+            #     "notebooks": user_notebooks[user_id],
+            #     "file_url": file_url,
+            #     "entity_column": entity_id_column,
+            #     "target_column": target_column,
+            #     "time_column": time_column,
+            #     "time_frame": final_time_frame,
+            #     # [ADDED CODE FOR FREQUENCY]
+            #     "time_frequency": time_frequency,
+            #     "features": feature_columns,
+            #     "user_id": user_id,
+            #     "chat_id": chat_id,
+            # }
+            # Return response
             response_data = {
                 "message": "Notebook generated and saved successfully.",
                 "notebook_id": notebook.id,
@@ -865,6 +867,7 @@ class UnifiedChatGPTAPI(APIView):
             print("[DEBUG] Returning data to the frontend (time-based approach)...", response_data)
             return Response(response_data, status=status.HTTP_200_OK)
 
+        # NON-TIME-BASED APPROACH
         else:
             print("[DEBUG] Non-time-based approach triggered.")
             notebook_entity_target = self.create_entity_target_notebook(
@@ -884,6 +887,7 @@ class UnifiedChatGPTAPI(APIView):
             notebook_entity_target_json = nbformat.writes(notebook_entity_target_sanitized, version=4)
             notebook_features_json = nbformat.writes(notebook_features_sanitized, version=4)
 
+            # Save to database as two separate records
             notebook_entity_target_record = Notebook.objects.create(
                 user=user,
                 chat=chat_id,
@@ -908,13 +912,24 @@ class UnifiedChatGPTAPI(APIView):
                 'entity_target_notebook': notebook_entity_target_json,
                 'features_notebook': notebook_features_json
             }
+
+            # response_data = {
+            #     "message": "Notebooks generated successfully (non-time-based).",
+            #     "notebooks": user_notebooks[user_id],
+            #     "file_url": file_url,
+            #     "entity_column": entity_id_column,
+            #     "target_column": target_column,
+            #     "features": feature_columns,
+            #     "user_id": user_id,
+            #     "chat_id": chat_id,
+            # }
             response_data = {
-                "message": "Notebooks generated and saved successfully (non-time-based).",
-                "entity_target_notebook_id": notebook_entity_target_record.id,
-                "features_notebook_id": notebook_features_record.id,
-                "entity_target_notebook": notebook_entity_target_json,
-                "features_notebook": notebook_features_json
-            }
+            "message": "Notebooks generated and saved successfully (non-time-based).",
+            "entity_target_notebook_id": notebook_entity_target_record.id,
+            "features_notebook_id": notebook_features_record.id,
+            "entity_target_notebook": notebook_entity_target_json,
+            "features_notebook": notebook_features_json
+        }
             print("[DEBUG] Returning data to the frontend (non-time-based approach)...", response_data)
             return Response(response_data, status=status.HTTP_200_OK)
 
@@ -928,12 +943,26 @@ class UnifiedChatGPTAPI(APIView):
         extra_features: list,
         time_frequency: str = None
     ):
+        """
+        Creates a notebook with 4 steps (similar to Pecan's approach):
+
+        1) Generate daily increments from earliest to latest date, then
+        truncate by user’s time frequency (day/week/month).
+        2) For each entity, keep only times after it first appears.
+        3) Summarize the target within the next X time units after that
+        analysis_time (partial window filter included).
+        4) Join in features from the prior 1 year of data (lookback).
+
+        Updated to ensure we gather *all* monthly snapshots from each
+        entity's earliest date and do not limit to only the last date.
+        """
         import nbformat
         import datetime
         import numpy as np
         import pandas as pd
         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell, new_output
 
+        # Helper to parse the "6 months", "3 weeks", etc.
         def parse_time_horizon(th: str):
             parts = th.strip().split()
             if len(parts) < 2:
@@ -942,6 +971,7 @@ class UnifiedChatGPTAPI(APIView):
             unit = parts[1].lower().rstrip('s')
             return int(number), unit
 
+        # Helper to format Timestamps for output
         def _stringify_timestamps(rows):
             for row in rows:
                 for k, v in row.items():
@@ -950,6 +980,7 @@ class UnifiedChatGPTAPI(APIView):
 
         horizon_number, horizon_unit = parse_time_horizon(time_horizon)
 
+        # Decide the `date_trunc` unit based on time_frequency
         if time_frequency:
             freq_lower = time_frequency.strip().lower()
             if freq_lower.startswith("day"):
@@ -957,6 +988,7 @@ class UnifiedChatGPTAPI(APIView):
             elif freq_lower.startswith("week"):
                 increment_unit = "week"
             else:
+                # default to month
                 increment_unit = "month"
         else:
             increment_unit = "month"
@@ -964,11 +996,15 @@ class UnifiedChatGPTAPI(APIView):
         nb = new_notebook()
         cells = []
 
+        ############################################################################
+        # STEP 1: Generate daily increments, then truncate by time_frequency
+        ############################################################################
         step1_markdown = new_markdown_cell(
             "### Step 1: Determine relevant timestamps based on Time Frequency"
         )
         cells.append(step1_markdown)
 
+        # Removed the small LIMIT entirely so we get *all* relevant timestamps.
         query_step1 = f"""
             WITH minmax AS (
                 SELECT
@@ -988,9 +1024,8 @@ class UnifiedChatGPTAPI(APIView):
             FROM all_relevant_dates
             ORDER BY relevant_time
             LIMIT 1000
+            
         """.strip()
-
-        from nbformat.v4 import new_markdown_cell, new_code_cell, new_output
 
         step1_cell = new_code_cell(query_step1)
         df_step1 = execute_sql_query(query_step1)
@@ -1030,11 +1065,15 @@ class UnifiedChatGPTAPI(APIView):
             ]
         cells.append(step1_cell)
 
+        ############################################################################
+        # STEP 2: For each entity, gather relevant times after earliest record
+        ############################################################################
         step2_markdown = new_markdown_cell(
             "### Step 2: For each entity, gather relevant times after earliest record"
         )
         cells.append(step2_markdown)
 
+        # Use *all* relevant times in ascending order, no small limit that cuts off earlier months.
         step1_sub = query_step1.strip().rstrip(';')
         query_step2 = f"""
             WITH entity_earliest_time AS (
@@ -1055,6 +1094,7 @@ class UnifiedChatGPTAPI(APIView):
                 ON relevant_times_in_dataset.relevant_time >= entity_earliest_time.first_seen_time
             ORDER BY analysis_time, entity_id
             LIMIT 1000
+            
         """.strip()
 
         step2_cell = new_code_cell(query_step2)
@@ -1092,6 +1132,10 @@ class UnifiedChatGPTAPI(APIView):
             ]
         cells.append(step2_cell)
 
+        ############################################################################
+        # STEP 3: Summarize the target measure over the chosen time horizon
+        #         (exclude partial windows after the last full horizon)
+        ############################################################################
         step3_markdown = new_markdown_cell(
             "### Step 3: Summarize the target measure over the chosen time horizon (partial window filter)"
         )
@@ -1123,8 +1167,35 @@ class UnifiedChatGPTAPI(APIView):
             ORDER BY
                 entity_times.analysis_time,
                 entity_times.entity_id
-            LIMIT 1000
+                LIMIT 1000
+                
         """.strip()
+
+#         query_step3 = f""" WITH last_time AS (
+#     SELECT MAX({time_column}) AS max_ts
+#     FROM {table_name}
+# ),
+# entity_times AS (
+#     {step2_sub}
+# )
+# SELECT
+#     entity_times.entity_id,
+#     entity_times.analysis_time,
+#     COALESCE(SUM(tbl.{target_column}), 0) AS target_within_{horizon_label}_after
+# FROM entity_times
+# LEFT JOIN {table_name} AS tbl
+#     ON tbl.{entity_id_column} = entity_times.entity_id
+#     AND tbl.{time_column} >= entity_times.analysis_time
+#     AND tbl.{time_column} < entity_times.analysis_time + INTERVAL '{horizon_number}' {horizon_unit}
+# WHERE entity_times.analysis_time <= (SELECT max_ts - INTERVAL '{horizon_number}' {horizon_unit} FROM last_time)
+# GROUP BY
+#     entity_times.entity_id,
+#     entity_times.analysis_time
+# ORDER BY
+#     entity_times.analysis_time,
+#     entity_times.entity_id
+#     LIMIT 1000;
+# """.strip()
 
         step3_cell = new_code_cell(query_step3)
         df_step3 = execute_sql_query(query_step3)
@@ -1161,6 +1232,9 @@ class UnifiedChatGPTAPI(APIView):
             ]
         cells.append(step3_cell)
 
+        ############################################################################
+        # STEP 4: Join additional features (1-year lookback)
+        ############################################################################
         step4_markdown = new_markdown_cell(
             "### Step 4: Join additional features (1-year lookback before analysis_time)"
         )
@@ -1189,7 +1263,8 @@ class UnifiedChatGPTAPI(APIView):
             ORDER BY
                 core_set.analysis_time,
                 core_set.entity_id
-            LIMIT 1000
+                LIMIT 1000
+                
         """.strip()
 
         step4_cell = new_code_cell(query_step4)
@@ -1229,6 +1304,9 @@ class UnifiedChatGPTAPI(APIView):
 
         nb['cells'] = cells
         return nb
+
+
+
 
     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str, file_size_mb: float):
         print("[DEBUG] Triggering Glue update for table:", table_name)
@@ -1295,7 +1373,7 @@ class UnifiedChatGPTAPI(APIView):
 
     def validate_column_exists(self, column_name, columns_list):
         if not column_name:
-            return True
+            return True  # If user never specified, no need to block
         print("[DEBUG] Validating column existence:", column_name)
         print("[DEBUG] Available columns:", columns_list)
         norm_col = normalize_column_name(column_name)
@@ -1340,12 +1418,40 @@ class UnifiedChatGPTAPI(APIView):
             f"SELECT {sanitized_entity_id_column}, {sanitized_target_column} "
             f"FROM {table_name} LIMIT 10;"
         )
-        # Make sure the query is a single string.
-        sql_query_entity_target = sql_query_entity_target.strip()
-        # Potentially add a code cell, etc. if needed
-        # Create a code cell with the query and add it to the notebook cells
-        code_cell = new_code_cell(sql_query_entity_target)
-        cells.append(code_cell)
+        # # df_result = execute_sql_query(sql_query_entity_target)
+        # if df_result.empty:
+        #     error_message = f"No data returned for query: {sql_query_entity_target}"
+        #     cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+        # else:
+        #     df_result = df_result.replace([np.nan, np.inf, -np.inf], None)
+        #     result_json = df_result.to_dict(orient='records')
+        #     columns = []
+        #     for col in df_result.columns:
+        #         non_null_series = pd.Series([x for x in df_result[col] if x is not None])
+        #         if non_null_series.empty:
+        #             col_type = "string"
+        #         else:
+        #             col_type = infer_column_dtype(non_null_series)
+        #         columns.append({'name': col, 'type': col_type})
+
+        #     text_repr = df_result.head().to_string(index=False)
+        #     code_cell = new_code_cell(sql_query_entity_target)
+        #     code_cell['execution_count'] = 1
+        #     code_cell.outputs = [
+        #         new_output(
+        #             output_type='execute_result',
+        #             data={
+        #                 'application/json': {
+        #                     'rows': result_json,
+        #                     'columns': columns
+        #                 },
+        #                 'text/plain': text_repr
+        #             },
+        #             metadata={},
+        #             execution_count=1
+        #         )
+        #     ]
+        #     cells.append(code_cell)
 
         nb['cells'] = cells
         return nb
@@ -1371,15 +1477,41 @@ class UnifiedChatGPTAPI(APIView):
             f"SELECT\n    " + ",\n    ".join(sanitized_features) +
             f"\nFROM {table_name}\nLIMIT 10;"
         )
-        # You can add code cells, etc.
-        # Add a code cell with the features query
 
-        # Join and strip in case extra spaces or newline tokens exist.
-        feature_query = feature_query.strip()
+        # df_result = execute_sql_query(feature_query)
+        # if df_result.empty:
+        #     error_message = f"No data returned for query: {feature_query}"
+        #     cells.append(new_markdown_cell(f"**Error:** {error_message}"))
+        # else:
+        #     df_result = df_result.replace([np.nan, np.inf, -np.inf], None)
+        #     result_json = df_result.to_dict(orient='records')
+        #     columns = []
+        #     for col in df_result.columns:
+        #         non_null_series = pd.Series([x for x in df_result[col] if x is not None])
+        #         if non_null_series.empty:
+        #             col_type = "string"
+        #         else:
+        #             col_type = infer_column_dtype(non_null_series)
+        #         columns.append({'name': col, 'type': col_type})
 
-
-        code_cell = new_code_cell(feature_query)
-        cells.append(code_cell)
+            # text_repr = df_result.head().to_string(index=False)
+            # code_cell = new_code_cell(feature_query)
+            # code_cell['execution_count'] = 1
+            # code_cell.outputs = [
+            #     new_output(
+            #         output_type='execute_result',
+            #         data={
+            #             'application/json': {
+            #                 'rows': result_json,
+            #                 'columns': columns
+            #             },
+            #             'text/plain': text_repr
+            #         },
+            #         metadata={},
+            #         execution_count=1
+                # )
+            # ]
+            # cells.append(code_cell)
 
         nb['cells'] = cells
         return nb
@@ -1412,7 +1544,7 @@ class UnifiedChatGPTAPI(APIView):
         while time.time() - start_time < timeout:
             try:
                 query = f"SELECT 1 FROM {ATHENA_SCHEMA_NAME}.{table_name} LIMIT 1;"
-                df = execute_sql_query(query)
+                # df = execute_sql_query(query)
                 if df.empty:
                     print("[DEBUG] Athena recognizes the table (no error), table ready:", table_name)
                     athena_table_ready = True
@@ -1435,8 +1567,6 @@ class UnifiedChatGPTAPI(APIView):
             return False
 
         return True
-
-
 class ChatHistoryByUserView(APIView):
     """
     API to retrieve chat history for a specific user.
@@ -1486,40 +1616,55 @@ class ChatHistoryByUserView(APIView):
             print(f"ERROR: Unexpected error occurred: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# for getting sql queries data
+
+
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 class NotebookView(APIView):
+
     def get(self, request):
         user_id = request.query_params.get("user_id")
         chat_id = request.query_params.get("chat_id")
 
-        if not user_id and not chat_id:
-            return Response(
-                {"error": "At least one of 'user_id' or 'chat_id' is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not user_id or not chat_id:
+            return Response({"error": "user_id and chat_id are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            filters = {}
-            if user_id:
-                filters["user_id"] = user_id
-            if chat_id:
-                filters["chat"] = chat_id
+            # notebooks = Notebook.objects.filter(user_id=user_id, chat__chat_id=chat_id)
+            notebooks = Notebook.objects.filter(chat    =chat_id, user_id=user_id)
 
-            notebooks = Notebook.objects.filter(**filters)
+
             if not notebooks.exists():
-                return Response(
-                    {"error": "No notebooks found for the given criteria."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return Response({"error": "No notebooks found for the given user_id and chat_id."}, status=status.HTTP_404_NOT_FOUND)
 
+            # Serialize the data
             notebook_data = [
                 {
                     "id": notebook.id,
-                    "user_id": notebook.user_id,
-                    "chat_id": notebook.chat,
                     "entity_column": notebook.entity_column,
                     "target_column": notebook.target_column,
                     "time_column": notebook.time_column,
@@ -1533,14 +1678,7 @@ class NotebookView(APIView):
                 for notebook in notebooks
             ]
 
-            return Response(
-                {
-                    "message": "Notebooks retrieved successfully.",
-                    "user_id": user_id,
-                    "notebooks": notebook_data,
-                },
-                status=status.HTTP_200_OK,
-            )
+            return Response({"message": "Notebooks retrieved successfully.", "notebooks": notebook_data}, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

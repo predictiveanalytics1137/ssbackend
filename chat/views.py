@@ -1692,6 +1692,10 @@ from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import AIMessage, HumanMessage
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
+from .models import PredictiveSettings
+from .serializers import PredictiveSettingsSerializer
 
 import difflib
 
@@ -1966,6 +1970,10 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
         if updated_fields:
             ps.save(update_fields=list(updated_fields.keys()))
     return updated_fields
+
+
+
+
 
 
 class UnifiedChatGPTAPI(APIView):
@@ -3492,3 +3500,43 @@ class NotebookView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+# views.py
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .models import PredictiveSettings  # Adjust the import if your model is in a different module
+
+class PredictiveSettingsDetailView(APIView):
+    """
+    GET endpoint to retrieve predictive settings.
+    URL Format: /api/predictive-settings/<user_id>/<chat_id>/
+    
+    Returns the predictive settings for a given user and chat.
+    If any field is empty, the response returns the string "Null" for that field.
+    """
+
+    def get(self, request, user_id, chat_id):
+        try:
+            ps = PredictiveSettings.objects.get(user_id=user_id, chat_id=chat_id)
+        except PredictiveSettings.DoesNotExist:
+            return Response(
+                {"error": "Predictive settings not found for the given user and chat."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Replace empty fields with "Null"
+        data = {
+            "target_column": ps.target_column if ps.target_column else "Null",
+            "entity_column": ps.entity_column if ps.entity_column else "Null",
+            "time_column": ps.time_column if ps.time_column else "Null",
+            "predictive_question": ps.predictive_question if ps.predictive_question else "Null",
+            "time_frame": ps.time_frame if ps.time_frame else "Null",
+            "time_frequency": ps.time_frequency if ps.time_frequency else "Null",
+            "machine_learning_type": ps.machine_learning_type if ps.machine_learning_type else "Null"
+        }
+        
+        return Response(data, status=status.HTTP_200_OK)

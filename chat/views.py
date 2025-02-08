@@ -2358,6 +2358,157 @@ class UnifiedChatGPTAPI(APIView):
     #         "settings_updated": bool(updated_fields)  # Indicates if any settings were changed
     #     })
 
+
+    def create_new_chat(self, user, initial_text):
+        """
+        Creates a new chat backup with no previous conversation,
+        and returns the new chat object and its unique chat_id.
+        """
+        chat_id = str(uuid.uuid4())
+        chat_title = initial_text[:50]
+        # Create a new chat backup with empty messages.
+        chat_obj = ChatBackup.objects.create(
+            user=user,
+            chat_id=chat_id,
+            title=chat_title,
+            messages=[]
+        )
+        # Also clear any existing conversation chain for this chat if present.
+        memory_key = f"{user.id}_{chat_id}"
+        if memory_key in user_conversations:
+            del user_conversations[memory_key]
+        # Create a new conversation chain with empty memory.
+        conversation_chain = ConversationChain(
+            llm=llm_chatgpt,
+            prompt=chat_prompt,
+            input_key="user_input",
+            memory=ConversationBufferMemory(return_messages=True)
+        )
+        user_conversations[memory_key] = conversation_chain
+        return chat_obj, chat_id
+
+    # def handle_chat(self, request):
+    #     user_input = request.data.get("message", "").strip()
+    #     user_id = request.data.get("user_id", "default_user")
+    #     chat_id = request.data.get("chat_id")
+
+    #     if not user_input:
+    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Validate user existence
+    #     try:
+    #         user = User.objects.get(id=user_id)
+    #     except User.DoesNotExist:
+    #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    #     # Create or get a chat backup. If no chat_id is provided, create a new chat.
+    #     if not chat_id:
+    #         chat_id = str(uuid.uuid4())
+    #         chat_title = user_input[:50]
+    #         ChatBackup.objects.create(
+    #             user=user,
+    #             chat_id=chat_id,
+    #             title=chat_title,
+    #             messages=[]
+    #         )
+
+    #     chat_obj, _ = ChatBackup.objects.get_or_create(
+    #         user=user,
+    #         chat_id=chat_id,
+    #         defaults={"title": user_input[:50], "messages": []}
+    #     )
+
+    #     # Get schema columns (if available) from the in-memory user_schemas.
+    #     schema_columns = []
+    #     if user_id in user_schemas and user_schemas[user_id]:
+    #         # Use the schema from the first uploaded file.
+    #         schema_columns = [col["column_name"] for col in user_schemas[user_id][0]["schema"]]
+
+    #     # Parse user input into structured updates.
+    #     system_prompt = "Extract user instructions about target/entity/time_frame/time_column/time_frequency/predictive_question."
+    #     parsed_updates = parse_nlu_input(
+    #         system_prompt=system_prompt,
+    #         user_message=user_input,
+    #         schema_columns=schema_columns
+    #     )
+
+    #     # Use a looser confirmation check (substring search) so that messages like 
+    #     # "absolutly correct proceed with it" override parsed updates with stored suggestions.
+    #     confirmation_keywords = ["yes", "correct", "proceed", "confirm", "sure", "absolutely", "right", "ok", "okay"]
+    #     if any(keyword in user_input.lower() for keyword in confirmation_keywords):
+    #         if user_id in user_schemas and user_schemas[user_id]:
+    #             file_info = user_schemas[user_id][0]
+    #             suggestions = file_info.get("suggestions", {})
+    #             if suggestions.get("target_column"):
+    #                 parsed_updates["target_column"] = suggestions["target_column"]
+    #             if suggestions.get("entity_column"):
+    #                 parsed_updates["entity_column"] = suggestions["entity_column"]
+    #             # If a date column was detected and only one exists, set it as the time column.
+    #             if file_info.get("has_date_column") and file_info.get("date_columns"):
+    #                 if len(file_info["date_columns"]) == 1:
+    #                     parsed_updates["time_column"] = file_info["date_columns"][0]
+
+    #     # Load existing predictive settings or create new ones.
+    #     ps, created = PredictiveSettings.objects.get_or_create(
+    #         user=user,
+    #         chat_id=chat_id,
+    #         defaults={
+    #             'target_column': None,
+    #             'entity_column': None,
+    #             'time_column': None,
+    #             'predictive_question': None,
+    #             'time_frame': None,
+    #             'time_frequency': None,
+    #             'machine_learning_type': 'regression'
+    #         }
+    #     )
+
+    #     # Update the settings using our dedicated helper.
+    #     updated_fields = update_predictive_settings(ps, parsed_updates, schema_columns)
+
+    #     # Prepare or restore the conversation chain.
+    #     memory_key = f"{user_id}_{chat_id}"
+    #     if memory_key not in user_conversations:
+    #         restored_memory = ConversationBufferMemory(return_messages=True)
+    #         for msg in chat_obj.messages:
+    #             if msg["sender"] == "assistant":
+    #                 restored_memory.chat_memory.add_message(AIMessage(content=msg["text"]))
+    #             else:
+    #                 restored_memory.chat_memory.add_message(HumanMessage(content=msg["text"]))
+    #         user_conversations[memory_key] = ConversationChain(
+    #             llm=llm_chatgpt,
+    #             prompt=chat_prompt,
+    #             input_key="user_input",
+    #             memory=restored_memory
+    #         )
+
+    #     conversation_chain = user_conversations[memory_key]
+    #     assistant_response = conversation_chain.run(user_input=user_input)
+
+    #     # Save the conversation to the chat backup.
+    #     timestamp = datetime.datetime.now().isoformat()
+    #     chat_obj.messages.append({"sender": "user", "text": user_input, "timestamp": timestamp})
+    #     chat_obj.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": timestamp})
+    #     chat_obj.save()
+
+    #     # Determine if notebook generation should be enabled.
+    #     show_generate_notebook = bool(
+    #         ps.target_column and 
+    #         ps.entity_column and 
+    #         (not ps.time_column or ps.time_column in schema_columns)
+    #     )
+
+    #     return Response({
+    #         "response": assistant_response,
+    #         "chat_id": chat_id,
+    #         "show_generate_notebook": show_generate_notebook,
+    #         "corrected_target_column": ps.target_column,
+    #         "corrected_entity_column": ps.entity_column,
+    #         "corrected_time_column": ps.time_column,
+    #         "settings_updated": bool(updated_fields)
+    #     })
+
+
     def handle_chat(self, request):
         user_input = request.data.get("message", "").strip()
         user_id = request.data.get("user_id", "default_user")
@@ -2372,22 +2523,27 @@ class UnifiedChatGPTAPI(APIView):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Create or get a chat backup. If no chat_id is provided, create a new chat.
+        # If no chat_id is provided or if a "new chat" is requested from the front end,
+        # create a new chat with empty conversation.
         if not chat_id:
-            chat_id = str(uuid.uuid4())
-            chat_title = user_input[:50]
-            ChatBackup.objects.create(
+            chat_obj, chat_id = self.create_new_chat(user, user_input)
+        else:
+            # Try to get the chat backup for the given chat_id.
+            chat_obj, _ = ChatBackup.objects.get_or_create(
                 user=user,
                 chat_id=chat_id,
-                title=chat_title,
-                messages=[]
+                defaults={"title": user_input[:50], "messages": []}
             )
-
-        chat_obj, _ = ChatBackup.objects.get_or_create(
-            user=user,
-            chat_id=chat_id,
-            defaults={"title": user_input[:50], "messages": []}
-        )
+            # If this chat backup has no messages, then this is a new chat.
+            if not chat_obj.messages:
+                memory_key = f"{user_id}_{chat_id}"
+                conversation_chain = ConversationChain(
+                    llm=llm_chatgpt,
+                    prompt=chat_prompt,
+                    input_key="user_input",
+                    memory=ConversationBufferMemory(return_messages=True)
+                )
+                user_conversations[memory_key] = conversation_chain
 
         # Get schema columns (if available) from the in-memory user_schemas.
         schema_columns = []
@@ -2403,8 +2559,7 @@ class UnifiedChatGPTAPI(APIView):
             schema_columns=schema_columns
         )
 
-        # Use a looser confirmation check (substring search) so that messages like 
-        # "absolutly correct proceed with it" override parsed updates with stored suggestions.
+        # Use a looser confirmation check so that messages like "absolutly correct proceed with it" override parsed updates.
         confirmation_keywords = ["yes", "correct", "proceed", "confirm", "sure", "absolutely", "right", "ok", "okay"]
         if any(keyword in user_input.lower() for keyword in confirmation_keywords):
             if user_id in user_schemas and user_schemas[user_id]:
@@ -2437,23 +2592,26 @@ class UnifiedChatGPTAPI(APIView):
         # Update the settings using our dedicated helper.
         updated_fields = update_predictive_settings(ps, parsed_updates, schema_columns)
 
-        # Prepare or restore the conversation chain.
+        # Prepare or restore the conversation chain specific to this chat.
         memory_key = f"{user_id}_{chat_id}"
         if memory_key not in user_conversations:
+            # This branch should not happen because a new chat always gets a new conversation chain.
             restored_memory = ConversationBufferMemory(return_messages=True)
             for msg in chat_obj.messages:
                 if msg["sender"] == "assistant":
                     restored_memory.chat_memory.add_message(AIMessage(content=msg["text"]))
                 else:
                     restored_memory.chat_memory.add_message(HumanMessage(content=msg["text"]))
-            user_conversations[memory_key] = ConversationChain(
+            conversation_chain = ConversationChain(
                 llm=llm_chatgpt,
                 prompt=chat_prompt,
                 input_key="user_input",
                 memory=restored_memory
             )
+            user_conversations[memory_key] = conversation_chain
+        else:
+            conversation_chain = user_conversations[memory_key]
 
-        conversation_chain = user_conversations[memory_key]
         assistant_response = conversation_chain.run(user_input=user_input)
 
         # Save the conversation to the chat backup.
@@ -2478,6 +2636,7 @@ class UnifiedChatGPTAPI(APIView):
             "corrected_time_column": ps.time_column,
             "settings_updated": bool(updated_fields)
         })
+
 
 
 

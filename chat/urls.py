@@ -17,7 +17,7 @@
 
 from django.urls import path
 # from .views import ChatListView, MessageListView, UnifiedChatGPTAPI, ChatHistoryByUserView
-from .views import  NotebookView, UnifiedChatGPTAPI, ChatHistoryByUserView
+from .views import  NotebookView, PredictiveSettingsDetailView, UnifiedChatGPTAPI, ChatHistoryByUserView
 
 urlpatterns = [
     path('chatgpt/', UnifiedChatGPTAPI.as_view(), name='chatgpt_chat'),  # ChatGPT-related endpoint
@@ -26,6 +26,12 @@ urlpatterns = [
     # path('chats/<uuid:chat_id>/messages/', MessageListView.as_view(), name='message_list'),
     # path('chats/', ChatListView.as_view(), name='chat-list'),
     path('chat_history/', ChatHistoryByUserView.as_view(), name='chat_history'),
+    path(
+        'predictive-settings/<str:user_id>/<str:chat_id>/',
+        PredictiveSettingsDetailView.as_view(),
+        name='predictive-settings-detail'
+    ),
+
 ]
 
 

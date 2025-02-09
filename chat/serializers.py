@@ -212,3 +212,13 @@ class UploadedFileSerializer(serializers.ModelSerializer):
 #     class Meta:
 #         model = Chat
 #         fields = '__all__'
+
+
+
+from rest_framework import serializers
+from .models import PredictiveSettings
+
+class PredictiveSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PredictiveSettings
+        fields = '__all__'  # Adjust fields as needed

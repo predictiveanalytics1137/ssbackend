@@ -667,30 +667,148 @@ class ExecuteSQLView(APIView):
         return type_mapping.get(athena_type.lower(), athena_type)
 
 
+# class SaveNotebooksView(APIView):
+#     """
+#     Accepts aggregated query results from the front end, merges (or stores) them as CSV, and uploads to S3.
+#     """
+#     authentication_classes = [authentication.TokenAuthentication]
+#     permission_classes = [permissions.IsAuthenticated]
+
+#     def post(self, request):
+#         """
+#         Expects JSON in the form:
+#         {
+#           "user_id": "<user>",
+#           "chat_id": "<chat>",
+#           "cells": [
+#             {
+#               "cellId": 1,
+#               "query": "...",
+#               "columns": [...],
+#               "rows": [...]
+#             },
+#             ...
+#           ]
+#         }
+#         """
+#         user_id = request.data.get('user_id')
+#         chat_id = request.data.get('chat_id')
+#         cells = request.data.get('cells', [])
+
+#         if not user_id or not chat_id:
+#             return Response({"error": "Missing user_id or chat_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+#         # # Create an S3 client
+#         # s3_client = boto3.client(
+#         #     's3',
+#         #     aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+#         #     aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+#         #     region_name=settings.AWS_S3_REGION_NAME
+#         # )
+#         # bucket_name = settings.AWS_STORAGE_BUCKET_NAME
+
+#         s3_client = boto3.client(
+#                 's3',
+#                 aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+#                 aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+#                 region_name=os.getenv('AWS_S3_REGION_NAME')
+#             )
+#         bucket_name = os.getenv('AWS_STORAGE_BUCKET_NAME')
+
+#         saved_files = []
+#         try:
+#             # You can store each cell's result in its own CSV,
+#             # or combine them. We'll store each cell separately here.
+#             for cell_info in cells:
+#                 cell_id = cell_info.get('cellId')
+#                 columns_info = cell_info.get('columns', [])
+#                 rows_data = cell_info.get('rows', [])
+#                 query = cell_info.get('query', 'no_query')
+
+#                 # Convert rows_data to DataFrame
+#                 # columns_info is like [{'name': 'colA', 'type': 'String'}, ...]
+#                 col_order = [c['name'] for c in columns_info]
+#                 df = pd.DataFrame(rows_data)
+#                 # We only keep the columns that actually exist
+#                 intersection = [c for c in col_order if c in df.columns]
+#                 df = df[intersection]
+
+#                 # Make a unique CSV name
+#                 # file_key = f"{user_id}_{chat_id}_cell_{cell_id}_{uuid.uuid4().hex[:6]}.csv"
+
+#                 file_key = f"{user_id}/{chat_id}/cell_{cell_id}_{uuid.uuid4().hex[:6]}.csv"
+
+#                 # Save to CSV in memory
+#                 csv_buffer = io.StringIO()
+#                 df.to_csv(csv_buffer, index=False)
+#                 csv_buffer.seek(0)
+
+#                 s3_client.put_object(
+#                     Bucket=bucket_name,
+#                     Key=f"notebook_saves/{file_key}",
+#                     Body=csv_buffer.getvalue(),
+#                     ContentType='text/csv'
+#                 )
+
+#                 saved_files.append(file_key)
+
+#             return Response({"message": "Notebooks saved successfully.", "files": saved_files}, status=status.HTTP_200_OK)
+
+#         except Exception as e:
+#             print("[SaveNotebooksView] Exception:", e)
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+import os
+import io
+import uuid
+import boto3
+import pandas as pd
+from botocore.exceptions import ClientError
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions, authentication
+from django.conf import settings
+
+# Import the Notebook model from your chat app.
+from chat.models import Notebook
+from django.contrib.auth.models import User
+
 class SaveNotebooksView(APIView):
     """
-    Accepts aggregated query results from the front end, merges (or stores) them as CSV, and uploads to S3.
+    This endpoint accepts aggregated query results for each notebook cell from the front end,
+    converts each cell’s data to a CSV file, uploads it to S3, and saves a mapping of cell identifiers
+    to their S3 URLs in the Notebook model.
+    
+    Expected JSON payload:
+    {
+      "user_id": "<user>",
+      "chat_id": "<chat>",
+      "cells": [
+        {
+          "cellId": 1,        // optional; if missing or duplicate, a unique index is used
+          "query": "...",
+          "columns": [{"name": "colA", "type": "String"}, ...],
+          "rows": [{...}, {...}, ...]
+        },
+        {
+          "cellId": 2,
+          "query": "...",
+          "columns": [...],
+          "rows": [...]
+        },
+        ...
+      ]
+    }
+    
+    This implementation dynamically processes every cell in the payload.
     """
     authentication_classes = [authentication.TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        """
-        Expects JSON in the form:
-        {
-          "user_id": "<user>",
-          "chat_id": "<chat>",
-          "cells": [
-            {
-              "cellId": 1,
-              "query": "...",
-              "columns": [...],
-              "rows": [...]
-            },
-            ...
-          ]
-        }
-        """
         user_id = request.data.get('user_id')
         chat_id = request.data.get('chat_id')
         cells = request.data.get('cells', [])
@@ -698,51 +816,58 @@ class SaveNotebooksView(APIView):
         if not user_id or not chat_id:
             return Response({"error": "Missing user_id or chat_id"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # # Create an S3 client
-        # s3_client = boto3.client(
-        #     's3',
-        #     aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        #     aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        #     region_name=settings.AWS_S3_REGION_NAME
-        # )
-        # bucket_name = settings.AWS_STORAGE_BUCKET_NAME
-
+        # Create an S3 client (using environment variables).
         s3_client = boto3.client(
-                's3',
-                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-                region_name=os.getenv('AWS_S3_REGION_NAME')
-            )
+            's3',
+            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+            region_name=os.getenv('AWS_S3_REGION_NAME')
+        )
         bucket_name = os.getenv('AWS_STORAGE_BUCKET_NAME')
 
-        saved_files = []
-        try:
-            # You can store each cell's result in its own CSV,
-            # or combine them. We'll store each cell separately here.
-            for cell_info in cells:
-                cell_id = cell_info.get('cellId')
+        saved_files = {}  # This dictionary will hold mapping like {"cell1": "s3://bucket/...csv", ...}
+        errors = []       # Collect errors for individual cells if needed.
+
+        # Process every cell in the payload.
+        for index, cell_info in enumerate(cells, start=1):
+            try:
+                # Get the provided cellId if available.
+                provided_id = cell_info.get('cellId')
+                # Use provided_id if it exists and if it hasn’t been used already;
+                # otherwise, fall back to the current loop index.
+                if provided_id is not None and f"cell{provided_id}" not in saved_files:
+                    cell_id = str(provided_id)
+                else:
+                    cell_id = str(index)
+
                 columns_info = cell_info.get('columns', [])
                 rows_data = cell_info.get('rows', [])
                 query = cell_info.get('query', 'no_query')
 
-                # Convert rows_data to DataFrame
-                # columns_info is like [{'name': 'colA', 'type': 'String'}, ...]
+                # Even if rows_data is empty, create an empty list.
+                if not rows_data:
+                    rows_data = []
+
+                # Convert the cell’s rows data into a pandas DataFrame.
                 col_order = [c['name'] for c in columns_info]
                 df = pd.DataFrame(rows_data)
-                # We only keep the columns that actually exist
-                intersection = [c for c in col_order if c in df.columns]
-                df = df[intersection]
+                if not df.empty:
+                    # Keep only the columns that exist in the DataFrame.
+                    intersection = [c for c in col_order if c in df.columns]
+                    df = df[intersection]
+                else:
+                    # Create an empty DataFrame with the expected columns.
+                    df = pd.DataFrame(columns=col_order)
 
-                # Make a unique CSV name
-                # file_key = f"{user_id}_{chat_id}_cell_{cell_id}_{uuid.uuid4().hex[:6]}.csv"
-
+                # Generate a unique file key for this cell.
                 file_key = f"{user_id}/{chat_id}/cell_{cell_id}_{uuid.uuid4().hex[:6]}.csv"
 
-                # Save to CSV in memory
+                # Write the DataFrame as CSV into an in-memory string buffer.
                 csv_buffer = io.StringIO()
                 df.to_csv(csv_buffer, index=False)
                 csv_buffer.seek(0)
 
+                # Upload the CSV file to S3 under the "notebook_saves/" prefix.
                 s3_client.put_object(
                     Bucket=bucket_name,
                     Key=f"notebook_saves/{file_key}",
@@ -750,16 +875,45 @@ class SaveNotebooksView(APIView):
                     ContentType='text/csv'
                 )
 
-                saved_files.append(file_key)
+                # Build the full S3 URL.
+                s3_url = f"s3://{bucket_name}/notebook_saves/{file_key}"
+                # Save the URL using a key that is guaranteed to be unique.
+                saved_files[f"cell{cell_id}"] = s3_url
 
-            return Response({"message": "Notebooks saved successfully.", "files": saved_files}, status=status.HTTP_200_OK)
+            except Exception as e:
+                error_msg = f"Error processing cell {cell_info.get('cellId') or index}: {str(e)}"
+                print("[SaveNotebooksView] Exception:", error_msg)
+                errors.append(error_msg)
+                # Continue processing remaining cells.
 
-        except Exception as e:
-            print("[SaveNotebooksView] Exception:", e)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Get the user instance.
+        try:
+            user_instance = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Retrieve Notebook records for this user and chat.
+        notebooks = Notebook.objects.filter(user=user_instance, chat=chat_id)
+        if notebooks.exists():
+            # If multiple exist, choose the most recent one.
+            notebook = notebooks.order_by('-created_at').first()
+            notebook.cell_s3_links = saved_files
+            notebook.save()
+        else:
+            # Create a new Notebook record with the S3 mapping.
+            notebook = Notebook.objects.create(
+                user=user_instance,
+                chat=chat_id,
+                entity_column='',
+                target_column='',
+                features={},
+                file_url='',
+                notebook_json={},
+                cell_s3_links=saved_files
+            )
 
+        response_data = {"message": "Notebooks saved successfully.", "files": saved_files}
+        if errors:
+            response_data["errors"] = errors
 
-
-
-
+        return Response(response_data, status=status.HTTP_200_OK)

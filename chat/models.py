@@ -131,11 +131,32 @@ class ChatBackup(models.Model):
 
 
 
+# from django.db import models
+
+# class Notebook(models.Model):
+#     user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+#     # chat = models.ForeignKey('ChatBackup', on_delete=models.CASCADE)
+#     chat = models.CharField(max_length=255)
+#     entity_column = models.CharField(max_length=255)
+#     target_column = models.CharField(max_length=255)
+#     time_column = models.CharField(max_length=255, null=True, blank=True)
+#     time_frame = models.CharField(max_length=255, null=True, blank=True)
+#     time_frequency = models.CharField(max_length=255, null=True, blank=True)
+#     features = models.JSONField()
+#     file_url = models.URLField()
+#     notebook_json = models.JSONField()
+#     created_at = models.DateTimeField(auto_now_add=True)
+
+#     def __str__(self):
+#         return f"Notebook for User {self.user.id}, Chat {self.chat.id}"
+
+
+# notebooks/models.py
 from django.db import models
 
 class Notebook(models.Model):
     user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
-    # chat = models.ForeignKey('ChatBackup', on_delete=models.CASCADE)
+    # chat can be a CharField or a ForeignKey; here it is a CharField.
     chat = models.CharField(max_length=255)
     entity_column = models.CharField(max_length=255)
     target_column = models.CharField(max_length=255)
@@ -145,10 +166,13 @@ class Notebook(models.Model):
     features = models.JSONField()
     file_url = models.URLField()
     notebook_json = models.JSONField()
+    # New JSONField to store the mapping of each cell to its S3 URL
+    cell_s3_links = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Notebook for User {self.user.id}, Chat {self.chat.id}"
+        return f"Notebook for User {self.user.id}, Chat {self.chat}"
+
 
 
 

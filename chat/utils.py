@@ -66,59 +66,147 @@
 import openai
 import json
 
-def parse_nlu_input(system_prompt: str, user_message: str, schema_columns: list) -> dict:
-    """
-    Use GPT to parse user_message (in plain English) into a structured set of updates:
-      e.g. { "target_column": "status", "entity_column": "account_id", "time_frame": "1 month", ... }
+# def parse_nlu_input(system_prompt: str, user_message: str, schema_columns: list) -> dict:
+#     """
+#     Use GPT to parse user_message (in plain English) into a structured set of updates:
+#       e.g. { "target_column": "status", "entity_column": "account_id", "time_frame": "1 month", ... }
     
-    `schema_columns` can be used to help GPT guess the correct column names if user uses synonyms.
-    The system_prompt instructs GPT to ONLY produce valid JSON with the possible keys:
-      - "target_column"
-      - "entity_column"
-      - "time_frame"
-      - "predictive_question"
-      - "time_column"
-      - "time_frequency"
+#     `schema_columns` can be used to help GPT guess the correct column names if user uses synonyms.
+#     The system_prompt instructs GPT to ONLY produce valid JSON with the possible keys:
+#       - "target_column"
+#       - "entity_column"
+#       - "time_frame"
+#       - "predictive_question"
+#       - "time_column"
+#       - "time_frequency"
+#     """
+#     # Build a single prompt that includes system instructions and user context
+#     # This is what GPT will see.
+#     prompt = f"""
+#     System instructions:
+#     {system_prompt}
+
+#     The dataset columns are: {schema_columns}.
+#     The user says: {user_message}
+
+#     Please output ONLY valid JSON (no extra text) with any of these possible keys:
+#     - "target_column"
+#     - "entity_column"
+#     - "time_frame"
+#     - "time_column"
+#     - "time_frequency"
+#     - "predictive_question"
+
+#     If the user tries to rename a column or says something like "entity will be 'account'",
+#     see if 'account' is close to any actual columns. If there's no close match, leave it blank.
+#     """
+
+#     try:
+#         response = openai.ChatCompletion.create(
+#             model="gpt-4o-mini",  # or "gpt-3.5-turbo" or whichever model you actually have
+#             messages=[
+#                 {"role": "system", "content": prompt}
+#             ],
+#             temperature=0
+#         )
+#         content = response["choices"][0]["message"]["content"].strip()
+        
+#         # Attempt to parse the content as JSON
+#         parsed = json.loads(content)
+#         return parsed
+
+#     except Exception as e:
+#         print("[ERROR] parse_nlu_input failed:", e)
+#         return {}
+
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+
+def parse_nlu_input(system_prompt, user_message, schema_columns):
     """
-    # Build a single prompt that includes system instructions and user context
-    # This is what GPT will see.
-    prompt = f"""
-    System instructions:
-    {system_prompt}
-
-    The dataset columns are: {schema_columns}.
-    The user says: {user_message}
-
-    Please output ONLY valid JSON (no extra text) with any of these possible keys:
-    - "target_column"
-    - "entity_column"
-    - "time_frame"
-    - "time_column"
-    - "time_frequency"
-    - "predictive_question"
-
-    If the user tries to rename a column or says something like "entity will be 'account'",
-    see if 'account' is close to any actual columns. If there's no close match, leave it blank.
+    Enhanced NLU parsing with better validation
     """
-
     try:
+        messages = [
+            {"role": "system", "content": f"""
+            You are an AI assistant helping to parse user input for predictive settings.
+            Available columns: {', '.join(schema_columns)}
+            
+            Task: Analyze the user message and extract:
+            1. Target column changes
+            2. Entity column changes
+            3. Time frame specifications
+            4. Predictive questions
+            5. Confirmation intents
+            
+            Return ONLY a JSON with these exact keys:
+            {{
+                "is_confirmation": boolean,
+                "updates": {{
+                    "target_column": string or null,
+                    "entity_column": string or null,
+                    "time_frame": string or null,
+                    "predictive_question": string or null
+                }}
+            }}
+            
+            If the user mentions changing a target or predicting something specific, 
+            include it in both target_column and predictive_question.
+            """},
+            {"role": "user", "content": user_message}
+        ]
+        
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",  # or "gpt-3.5-turbo" or whichever model you actually have
-            messages=[
-                {"role": "system", "content": prompt}
-            ],
+            model="gpt-4o-mini",
+            messages=messages,
             temperature=0
         )
-        content = response["choices"][0]["message"]["content"].strip()
         
-        # Attempt to parse the content as JSON
-        parsed = json.loads(content)
-        return parsed
-
+        # Parse the response
+        parsed_response = json.loads(response.choices[0].message.content)
+        
+        # Validate the updates against schema
+        updates = parsed_response.get('updates', {})
+        validated_updates = {}
+        
+        # Handle target column update
+        if updates.get('target_column'):
+            target_col = updates['target_column'].lower()
+            # Find exact or closest match in schema
+            if target_col in [col.lower() for col in schema_columns]:
+                validated_updates['target_column'] = next(
+                    col for col in schema_columns if col.lower() == target_col
+                )
+                # Also update predictive question
+                if not updates.get('predictive_question'):
+                    validated_updates['predictive_question'] = f"How can we predict {validated_updates['target_column']}?"
+        
+        # Handle entity column update
+        if updates.get('entity_column'):
+            entity_col = updates['entity_column'].lower()
+            if entity_col in [col.lower() for col in schema_columns]:
+                validated_updates['entity_column'] = next(
+                    col for col in schema_columns if col.lower() == entity_col
+                )
+        
+        # Handle other updates
+        if updates.get('time_frame'):
+            validated_updates['time_frame'] = updates['time_frame']
+        if updates.get('predictive_question'):
+            validated_updates['predictive_question'] = updates['predictive_question']
+        
+        return {
+            'is_confirmation': parsed_response.get('is_confirmation', False),
+            'updates': validated_updates
+        }
+        
     except Exception as e:
-        print("[ERROR] parse_nlu_input failed:", e)
-        return {}
-
+        logger.error(f"Error in parse_nlu_input: {str(e)}")
+        return {'is_confirmation': False, 'updates': {}}
 
 
 import openai

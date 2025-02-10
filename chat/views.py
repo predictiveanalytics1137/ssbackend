@@ -2029,15 +2029,233 @@ class UnifiedChatGPTAPI(APIView):
     
 
 ### HANDLE FILE UPLOAD
+    # def handle_file_upload(self, request, files):
+    #     """
+    #     1) Ingests CSV/XLSX, normalizes columns
+    #     2) Infers schema
+    #     3) Uploads to S3
+    #     4) Creates or updates table in Glue
+    #     5) Returns 'uploaded_files_info' including suggestions
+    #     """
+    #     user_id = request.data.get("user_id", "default_user")
+    #     s3 = get_s3_client()
+    #     glue = get_glue_client()
+    #     uploaded_files_info = []
+
+    #     for file in files:
+    #         print(f"[DEBUG] Processing file: {file.name}")
+    #         try:
+    #             if file.name.lower().endswith('.csv'):
+    #                 df = pd.read_csv(
+    #                     file,
+    #                     low_memory=False,
+    #                     encoding='utf-8',
+    #                     delimiter=',',
+    #                     na_values=['NA', 'N/A', ''],
+    #                     on_bad_lines='warn'
+    #                 )
+    #             else:
+    #                 df = pd.read_excel(file, engine='openpyxl')
+
+    #             if df.empty:
+    #                 print("[ERROR] File is empty:", file.name)
+    #                 return Response({"error": f"Uploaded file {file.name} is empty."},
+    #                                 status=status.HTTP_400_BAD_REQUEST)
+    #             if not df.columns.any():
+    #                 print("[ERROR] File has no columns:", file.name)
+    #                 return Response({"error": f"Uploaded file {file.name} has no columns."},
+    #                                 status=status.HTTP_400_BAD_REQUEST)
+    #         except pd.errors.ParserError as e:
+    #             print("[ERROR] CSV parsing error:", e)
+    #             return Response({"error": f"CSV parsing error for file {file.name}: {str(e)}"},
+    #                             status=status.HTTP_400_BAD_REQUEST)
+    #         except Exception as e:
+    #             print("[ERROR] Error reading file:", e)
+    #             return Response({"error": f"Error reading file {file.name}: {str(e)}"},
+    #                             status=status.HTTP_400_BAD_REQUEST)
+
+    #         # Normalize column names
+    #         normalized_columns = [normalize_column_name(c) for c in df.columns]
+    #         if len(normalized_columns) != len(set(normalized_columns)):
+    #             print("[ERROR] Duplicate columns after normalization.")
+    #             return Response({"error": "Duplicate columns detected after normalization."},
+    #                             status=status.HTTP_400_BAD_REQUEST)
+    #         if any(col == '' for col in normalized_columns):
+    #             print("[ERROR] Empty column names after normalization.")
+    #             return Response({"error": "Some columns have empty names after normalization."},
+    #                             status=status.HTTP_400_BAD_REQUEST)
+
+    #         df.columns = normalized_columns
+
+    #         # Infer schema and standardize date columns
+    #         raw_schema = [{"column_name": col, "data_type": infer_column_dtype(df[col])} for col in df.columns]
+    #         df = standardize_datetime_columns(df, raw_schema)
+    #         final_schema = [{"column_name": col, "data_type": infer_column_dtype(df[col])} for col in df.columns]
+
+    #         has_date_column = any(c["data_type"] == "timestamp" for c in final_schema)
+    #         possible_date_cols = [c["column_name"] for c in final_schema if c["data_type"] == "timestamp"]
+
+    #         # Fix boolean columns
+    #         boolean_columns = [c['column_name'] for c in final_schema if c['data_type'] == 'boolean']
+    #         replacement_dict = {
+    #             '1': 'true', '0': 'false',
+    #             'yes': 'true', 'no': 'false',
+    #             't': 'true', 'f': 'false',
+    #             'y': 'true', 'n': 'false',
+    #             'true': 'true', 'false': 'false',
+    #         }
+    #         for col_name in boolean_columns:
+    #             df[col_name] = df[col_name].astype(str).str.strip().str.lower().replace(replacement_dict)
+    #             unexpected_values = [v for v in df[col_name].unique() if v not in ['true', 'false']]
+    #             if unexpected_values:
+    #                 print("[ERROR] Unexpected boolean values:", unexpected_values)
+    #                 return Response(
+    #                     {"error": f"Unexpected boolean values in column {col_name}: {unexpected_values}"},
+    #                     status=status.HTTP_400_BAD_REQUEST
+    #                 )
+
+    #         # Build unique file key for S3
+    #         file_name_base, file_extension = os.path.splitext(file.name)
+    #         file_name_base = file_name_base.lower().replace(' ', '_')
+    #         unique_id = uuid.uuid4().hex[:8]
+    #         new_file_name = f"{file_name_base}_{unique_id}{file_extension}"
+    #         s3_file_name = os.path.splitext(new_file_name)[0] + '.csv'
+    #         file_key = f"uploads/{unique_id}/{s3_file_name}"
+    #         print("[DEBUG] Uploading file to S3 at key:", file_key)
+
+    #         try:
+    #             with transaction.atomic():
+    #                 # Save the file record in Django
+    #                 file.seek(0)
+    #                 file_serializer = UploadedFileSerializer(data={'name': new_file_name, 'file': file})
+    #                 if file_serializer.is_valid():
+    #                     file_instance = file_serializer.save()
+    #                     # Re-upload as CSV to S3
+    #                     csv_buffer = BytesIO()
+    #                     df.to_csv(csv_buffer, index=False, encoding='utf-8')
+    #                     csv_buffer.seek(0)
+    #                     s3.upload_fileobj(csv_buffer, os.getenv('AWS_STORAGE_BUCKET_NAME'), file_key)
+    #                     print("[DEBUG] S3 upload successful:", file_key)
+    #                     s3.head_object(
+    #                         Bucket=os.getenv('AWS_STORAGE_BUCKET_NAME'),
+    #                         Key=file_key
+    #                     )
+    #                     file_url = f"s3://{os.getenv('AWS_STORAGE_BUCKET_NAME')}/{file_key}"
+    #                     file_instance.file_url = file_url
+    #                     file_instance.save()
+
+    #                     # Store the schema in DB
+    #                     FileSchema.objects.create(file=file_instance, schema=final_schema)
+
+    #                     file_size_mb = file.size / (1024 * 1024)
+    #                     self.trigger_glue_update(new_file_name, final_schema, file_key, file_size_mb)
+
+    #                     # Build suggestions.
+    #                     # (Note: Use the same key names as in PredictiveSettings: target_column and entity_column)
+    #                     # First use a simple suggestion (e.g. last column for target, first for entity)
+    #                     target_suggestion = suggest_target_column(df, [])
+    #                     entity_suggestion = suggest_entity_id_column(df)
+    #                     feature_candidates = [c for c in df.columns if c not in [entity_suggestion, target_suggestion]]
+
+    #                     # Optionally, run GPT to refine the suggestions
+    #                     full_chat_history = ""
+    #                     conversation_chain = user_conversations.get(f"{user_id}_{request.data.get('chat_id', '')}")
+    #                     if conversation_chain:
+    #                         for msg in conversation_chain.memory.chat_memory.messages:
+    #                             if msg.type == "human":
+    #                                 full_chat_history += f"User: {msg.content}\n"
+    #                             else:
+    #                                 full_chat_history += f"Assistant: {msg.content}\n"
+    #                     gpt_response = gpt_suggest_columns(df.columns.tolist(), full_chat_history)
+    #                     # Override if GPT returns something valid
+    #                     if gpt_response.get("suggested_target_column"):
+    #                         target_suggestion = gpt_response.get("suggested_target_column")
+    #                     if gpt_response.get("suggested_entity_column"):
+    #                         entity_suggestion = gpt_response.get("suggested_entity_column")
+    #                     if not target_suggestion:
+    #                         target_suggestion = df.columns[-1]
+    #                     if not entity_suggestion:
+    #                         entity_suggestion = df.columns[0]
+
+    #                     uploaded_files_info.append({
+    #                         'id': file_instance.id,
+    #                         'name': file_instance.name,
+    #                         'file_url': file_instance.file_url,
+    #                         'schema': final_schema,
+    #                         'file_size_mb': file_size_mb,
+    #                         'has_date_column': has_date_column,
+    #                         'date_columns': possible_date_cols,
+    #                         'suggestions': {
+    #                             'target_column': target_suggestion,
+    #                             'entity_column': entity_suggestion,
+    #                             'feature_columns': feature_candidates
+    #                         }
+    #                     })
+    #                 else:
+    #                     print("[ERROR] File serializer errors:", file_serializer.errors)
+    #                     return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    #         except ClientError as e:
+    #             print("[ERROR] AWS ClientError:", e)
+    #             return Response({'error': f'AWS error: {str(e)}'},
+    #                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    #         except Exception as e:
+    #             print("[ERROR] Unexpected error during file processing:", e)
+    #             return Response({'error': f'File processing failed: {str(e)}'},
+    #                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    #     # Store the uploaded files info (including suggestions) in memory for this user.
+    #     user_schemas[user_id] = uploaded_files_info
+
+    #     # (Optionally, initialize the conversation chain if needed.)
+    #     chat_id = request.data.get("chat_id", "")
+    #     memory_key = f"{user_id}_{chat_id}" if chat_id else user_id
+    #     if memory_key not in user_conversations:
+    #         conversation_chain = ConversationChain(
+    #             llm=llm_chatgpt,
+    #             prompt=chat_prompt,
+    #             input_key="user_input",
+    #             memory=ConversationBufferMemory()
+    #         )
+    #         user_conversations[memory_key] = conversation_chain
+    #     else:
+    #         conversation_chain = user_conversations[memory_key]
+
+    #     # Insert a message about the newly discovered schema
+    #     schema_discussion = self.format_schema_message(uploaded_files_info[0])
+    #     conversation_chain.memory.chat_memory.messages.append(
+    #         AIMessage(content=schema_discussion)
+    #     )
+
+    #     print("[DEBUG] Files uploaded and schema discussion initiated.")
+    #     return Response({
+    #         "message": "Files uploaded and processed successfully.",
+    #         "uploaded_files": uploaded_files_info,
+    #         "chat_message": schema_discussion
+    #     }, status=status.HTTP_201_CREATED)
+
     def handle_file_upload(self, request, files):
         """
-        1) Ingests CSV/XLSX, normalizes columns
-        2) Infers schema
-        3) Uploads to S3
-        4) Creates or updates table in Glue
-        5) Returns 'uploaded_files_info' including suggestions
+        1) Ingests CSV/XLSX, normalizes columns, and infers schema.
+        2) Uploads to S3 and updates Glue.
+        3) Persists file metadata (schema, suggestions, etc.) along with the chat ID.
         """
         user_id = request.data.get("user_id", "default_user")
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Retrieve or create the chat based on the provided chat_id.
+        chat_id = request.data.get("chat_id", "")
+        if chat_id:
+            try:
+                chat_obj = ChatBackup.objects.get(user=user, chat_id=chat_id)
+            except ChatBackup.DoesNotExist:
+                # If the chat_id is invalid, create a new chat.
+                chat_obj, chat_id = self.create_new_chat(user, "Initial file upload")
+        else:
+            chat_obj, chat_id = self.create_new_chat(user, "Initial file upload")
+
         s3 = get_s3_client()
         glue = get_glue_client()
         uploaded_files_info = []
@@ -2084,7 +2302,6 @@ class UnifiedChatGPTAPI(APIView):
                 print("[ERROR] Empty column names after normalization.")
                 return Response({"error": "Some columns have empty names after normalization."},
                                 status=status.HTTP_400_BAD_REQUEST)
-
             df.columns = normalized_columns
 
             # Infer schema and standardize date columns
@@ -2130,7 +2347,7 @@ class UnifiedChatGPTAPI(APIView):
                     file_serializer = UploadedFileSerializer(data={'name': new_file_name, 'file': file})
                     if file_serializer.is_valid():
                         file_instance = file_serializer.save()
-                        # Re-upload as CSV to S3
+                        from io import BytesIO
                         csv_buffer = BytesIO()
                         df.to_csv(csv_buffer, index=False, encoding='utf-8')
                         csv_buffer.seek(0)
@@ -2144,22 +2361,20 @@ class UnifiedChatGPTAPI(APIView):
                         file_instance.file_url = file_url
                         file_instance.save()
 
-                        # Store the schema in DB
+                        # Store the schema in DB (existing FileSchema model)
                         FileSchema.objects.create(file=file_instance, schema=final_schema)
 
                         file_size_mb = file.size / (1024 * 1024)
                         self.trigger_glue_update(new_file_name, final_schema, file_key, file_size_mb)
 
                         # Build suggestions.
-                        # (Note: Use the same key names as in PredictiveSettings: target_column and entity_column)
-                        # First use a simple suggestion (e.g. last column for target, first for entity)
                         target_suggestion = suggest_target_column(df, [])
                         entity_suggestion = suggest_entity_id_column(df)
                         feature_candidates = [c for c in df.columns if c not in [entity_suggestion, target_suggestion]]
 
-                        # Optionally, run GPT to refine the suggestions
+                        # Optionally, run GPT to refine suggestions.
                         full_chat_history = ""
-                        conversation_chain = user_conversations.get(f"{user_id}_{request.data.get('chat_id', '')}")
+                        conversation_chain = user_conversations.get(f"{user_id}_{chat_id}")
                         if conversation_chain:
                             for msg in conversation_chain.memory.chat_memory.messages:
                                 if msg.type == "human":
@@ -2167,7 +2382,6 @@ class UnifiedChatGPTAPI(APIView):
                                 else:
                                     full_chat_history += f"Assistant: {msg.content}\n"
                         gpt_response = gpt_suggest_columns(df.columns.tolist(), full_chat_history)
-                        # Override if GPT returns something valid
                         if gpt_response.get("suggested_target_column"):
                             target_suggestion = gpt_response.get("suggested_target_column")
                         if gpt_response.get("suggested_entity_column"):
@@ -2177,7 +2391,8 @@ class UnifiedChatGPTAPI(APIView):
                         if not entity_suggestion:
                             entity_suggestion = df.columns[0]
 
-                        uploaded_files_info.append({
+                        # Build the file info dictionary.
+                        file_info = {
                             'id': file_instance.id,
                             'name': file_instance.name,
                             'file_url': file_instance.file_url,
@@ -2190,7 +2405,22 @@ class UnifiedChatGPTAPI(APIView):
                                 'entity_column': entity_suggestion,
                                 'feature_columns': feature_candidates
                             }
-                        })
+                        }
+                        uploaded_files_info.append(file_info)
+                        
+                        # Persist file info with chat association.
+                        from .models import ChatFileInfo
+                        ChatFileInfo.objects.create(
+                            user=user,
+                            chat=chat_obj,
+                            file=file_instance,
+                            name=file_instance.name,
+                            file_url=file_instance.file_url,
+                            schema=final_schema,
+                            suggestions=file_info['suggestions'],
+                            has_date_column=has_date_column,
+                            date_columns=possible_date_cols,
+                        )
                     else:
                         print("[ERROR] File serializer errors:", file_serializer.errors)
                         return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -2203,12 +2433,8 @@ class UnifiedChatGPTAPI(APIView):
                 return Response({'error': f'File processing failed: {str(e)}'},
                                 status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Store the uploaded files info (including suggestions) in memory for this user.
-        user_schemas[user_id] = uploaded_files_info
-
         # (Optionally, initialize the conversation chain if needed.)
-        chat_id = request.data.get("chat_id", "")
-        memory_key = f"{user_id}_{chat_id}" if chat_id else user_id
+        memory_key = f"{user_id}_{chat_id}"
         if memory_key not in user_conversations:
             conversation_chain = ConversationChain(
                 llm=llm_chatgpt,
@@ -2220,18 +2446,20 @@ class UnifiedChatGPTAPI(APIView):
         else:
             conversation_chain = user_conversations[memory_key]
 
-        # Insert a message about the newly discovered schema
-        schema_discussion = self.format_schema_message(uploaded_files_info[0])
-        conversation_chain.memory.chat_memory.messages.append(
-            AIMessage(content=schema_discussion)
-        )
+        if uploaded_files_info:
+            schema_discussion = self.format_schema_message(uploaded_files_info[0])
+            conversation_chain.memory.chat_memory.messages.append(AIMessage(content=schema_discussion))
+        else:
+            schema_discussion = "No file info available."
 
         print("[DEBUG] Files uploaded and schema discussion initiated.")
         return Response({
             "message": "Files uploaded and processed successfully.",
             "uploaded_files": uploaded_files_info,
-            "chat_message": schema_discussion
+            "chat_message": schema_discussion,
+            "chat_id": chat_id
         }, status=status.HTTP_201_CREATED)
+
 
     
 
@@ -2265,173 +2493,11 @@ class UnifiedChatGPTAPI(APIView):
                 validated['entity_column'] = normalized_columns[entity]
             else:
                 errors.append(f"Entity column '{parsed_updates['entity_column']}' not found in schema")
-        
-        # # Validate time column
-        # if 'time_column' in parsed_updates:
-        #     time_col = parsed_updates['time_column'].lower()
-        #     if time_col in normalized_columns:
-        #         validated['time_column'] = normalized_columns[time_col]
-        #     else:
-        #         errors.append(f"Time column '{parsed_updates['time_column']}' not found in schema")
-        
-        # # Pass through non-column fields
-        # for field in ['time_frame', 'time_frequency', 'predictive_question']:
-        #     if field in parsed_updates:
-        #         validated[field] = parsed_updates[field]
+    
                 
         return validated, errors
 
 
-
-
-    # def handle_chat(self, request):
-    #     user_input = request.data.get("message", "").strip()
-    #     user_id = request.data.get("user_id", "default_user")
-    #     chat_id = request.data.get("chat_id")
-
-    #     if not user_input:
-    #         return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     # Validate user existence
-    #     try:
-    #         user = User.objects.get(id=user_id)
-    #     except User.DoesNotExist:
-    #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    #     # Create or get a chat backup. If no chat_id is provided, create a new chat.
-    #     if not chat_id:
-    #         chat_id = str(uuid.uuid4())
-    #         chat_title = user_input[:50]
-    #         ChatBackup.objects.create(
-    #             user=user,
-    #             chat_id=chat_id,
-    #             title=chat_title,
-    #             messages=[]
-    #         )
-
-    #     chat_obj, _ = ChatBackup.objects.get_or_create(
-    #         user=user,
-    #         chat_id=chat_id,
-    #         defaults={"title": user_input[:50], "messages": []}
-    #     )
-
-    #     # Get schema columns (if available) from the in-memory user_schemas.
-    #     schema_columns = []
-    #     if user_id in user_schemas and user_schemas[user_id]:
-    #         # Use the schema from the first uploaded file
-    #         schema_columns = [col["column_name"] for col in user_schemas[user_id][0]["schema"]]
-
-    #     # Parse user input into structured updates.
-    #     system_prompt = "Extract user instructions about target/entity/time_frame/time_column/time_frequency/predictive_question."
-    #     parsed_updates = parse_nlu_input(
-    #         system_prompt=system_prompt,
-    #         user_message=user_input,
-    #         schema_columns=schema_columns
-    #     )
-
-    #     # If the user’s message is a simple confirmation, override parsed_updates with the stored suggestions.
-    #     if user_input.strip().lower() in ["yes", "suggestions are correct", "confirm"]:
-    #         if user_id in user_schemas and user_schemas[user_id]:
-    #             file_info = user_schemas[user_id][0]
-    #             suggestions = file_info.get("suggestions", {})
-    #             # Use the suggestions from file upload:
-    #             if suggestions.get("target_column"):
-    #                 parsed_updates["target_column"] = suggestions["target_column"]
-    #             if suggestions.get("entity_column"):
-    #                 parsed_updates["entity_column"] = suggestions["entity_column"]
-    #             # If a date column was detected and only one exists, set it as the time column.
-    #             if file_info.get("has_date_column") and file_info.get("date_columns"):
-    #                 if len(file_info["date_columns"]) == 1:
-    #                     parsed_updates["time_column"] = file_info["date_columns"][0]
-
-    #     # Load existing predictive settings or create new ones.
-    #     ps, created = PredictiveSettings.objects.get_or_create(
-    #         user=user,
-    #         chat_id=chat_id,
-    #         defaults={
-    #             'target_column': None,
-    #             'entity_column': None,
-    #             'time_column': None,
-    #             'predictive_question': None,
-    #             'time_frame': None,
-    #             'time_frequency': None,
-    #             'machine_learning_type': 'regression'
-    #         }
-    #     )
-
-    #     # Update the settings using our dedicated helper.
-    #     updated_fields = update_predictive_settings(ps, parsed_updates, schema_columns)
-
-    #     # Prepare or restore the conversation chain.
-    #     memory_key = f"{user_id}_{chat_id}"
-    #     if memory_key not in user_conversations:
-    #         restored_memory = ConversationBufferMemory(return_messages=True)
-    #         for msg in chat_obj.messages:
-    #             if msg["sender"] == "assistant":
-    #                 restored_memory.chat_memory.add_message(AIMessage(content=msg["text"]))
-    #             else:
-    #                 restored_memory.chat_memory.add_message(HumanMessage(content=msg["text"]))
-    #         user_conversations[memory_key] = ConversationChain(
-    #             llm=llm_chatgpt,
-    #             prompt=chat_prompt,
-    #             input_key="user_input",
-    #             memory=restored_memory
-    #         )
-
-    #     conversation_chain = user_conversations[memory_key]
-    #     assistant_response = conversation_chain.run(user_input=user_input)
-
-    #     # Save the conversation to the chat backup.
-    #     timestamp = datetime.datetime.now().isoformat()
-    #     chat_obj.messages.append({"sender": "user", "text": user_input, "timestamp": timestamp})
-    #     chat_obj.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": timestamp})
-    #     chat_obj.save()
-
-    #     # Determine if the notebook generation should be enabled.
-    #     show_generate_notebook = bool(
-    #         ps.target_column and 
-    #         ps.entity_column and 
-    #         (not ps.time_column or ps.time_column in schema_columns)
-    #     )
-
-    #     return Response({
-    #         "response": assistant_response,
-    #         "chat_id": chat_id,
-    #         "show_generate_notebook": show_generate_notebook,
-    #         "corrected_target_column": ps.target_column,
-    #         "corrected_entity_column": ps.entity_column,
-    #         "corrected_time_column": ps.time_column,
-    #         "settings_updated": bool(updated_fields)  # Indicates if any settings were changed
-    #     })
-
-
-    # def create_new_chat(self, user, initial_text):
-    #     """
-    #     Creates a new chat backup with no previous conversation,
-    #     and returns the new chat object and its unique chat_id.
-    #     """
-    #     chat_id = str(uuid.uuid4())
-    #     chat_title = initial_text[:50]
-    #     # Create a new chat backup with empty messages.
-    #     chat_obj = ChatBackup.objects.create(
-    #         user=user,
-    #         chat_id=chat_id,
-    #         title=chat_title,
-    #         messages=[]
-    #     )
-    #     # Also clear any existing conversation chain for this chat if present.
-    #     memory_key = f"{user.id}_{chat_id}"
-    #     if memory_key in user_conversations:
-    #         del user_conversations[memory_key]
-    #     # Create a new conversation chain with empty memory.
-    #     conversation_chain = ConversationChain(
-    #         llm=llm_chatgpt,
-    #         prompt=chat_prompt,
-    #         input_key="user_input",
-    #         memory=ConversationBufferMemory(return_messages=True)
-    #     )
-    #     user_conversations[memory_key] = conversation_chain
-    #     return chat_obj, chat_id
 
     def create_new_chat(self, user, initial_text):
         """
@@ -2460,6 +2526,7 @@ class UnifiedChatGPTAPI(APIView):
     
 
 
+
     # def handle_chat(self, request):
     #     user_input = request.data.get("message", "").strip()
     #     user_id = request.data.get("user_id", "default_user")
@@ -2475,7 +2542,7 @@ class UnifiedChatGPTAPI(APIView):
     #     except User.DoesNotExist:
     #         return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #     # Create new chat if needed
+    #     # Possibly create a new chat
     #     if new_chat_flag or not chat_id:
     #         chat_obj, chat_id = self.create_new_chat(user, user_input)
     #     else:
@@ -2494,12 +2561,12 @@ class UnifiedChatGPTAPI(APIView):
     #             )
     #             user_conversations[memory_key] = conversation_chain
 
-    #     # Gather columns
+    #     # Gather schema columns from the first uploaded file
     #     schema_columns = []
     #     if user_id in user_schemas and user_schemas[user_id]:
     #         schema_columns = [col["column_name"] for col in user_schemas[user_id][0]["schema"]]
 
-    #     # Parse user request
+    #     # Parse user input for changes
     #     parsed_result = parse_nlu_input(
     #         system_prompt="Extract user instructions about target/entity/time_frame/time_column/time_frequency/predictive_question.",
     #         user_message=user_input,
@@ -2508,7 +2575,7 @@ class UnifiedChatGPTAPI(APIView):
     #     is_confirmation = parsed_result["is_confirmation"]
     #     explicit_updates = parsed_result["updates"]
 
-    #     # Pull or create PredictiveSettings
+    #     # Get/Create PredictiveSettings
     #     ps, created = PredictiveSettings.objects.get_or_create(
     #         user=user,
     #         chat_id=chat_id,
@@ -2523,25 +2590,43 @@ class UnifiedChatGPTAPI(APIView):
     #         }
     #     )
 
-    #     # Decide which fields to apply
     #     parsed_updates = {}
     #     if explicit_updates:
+    #         # User explicitly changed something: "Target Column: X" or "Entity Column: Y", etc.
     #         parsed_updates = explicit_updates
     #         logger.info(f"[handle_chat] applying explicit updates: {parsed_updates}")
     #     elif is_confirmation:
-    #         # <-- If you want to do NOTHING on "yes," just pass
-    #         logger.info("[handle_chat] user confirmed; ignoring fallback suggestions.")
-    #         pass
+    #         # User said "yes" or "correct." If entity_column is still None, use suggestions.
+    #         # This ensures we default to "customerid" if user didn’t explicitly set an entity column.
+    #         if not ps.entity_column:  
+    #             if user_id in user_schemas and user_schemas[user_id]:
+    #                 file_info = user_schemas[user_id][0]
+    #                 suggestions = file_info.get("suggestions", {})
+    #                 suggested_entity = suggestions.get("entity_column")
+    #                 if suggested_entity:
+    #                     parsed_updates["entity_column"] = suggested_entity
+    #                     logger.info(f"[handle_chat] Setting entity_column to '{suggested_entity}' by fallback suggestion.")
+    #         if not ps.target_column:  
+    #             if user_id in user_schemas and user_schemas[user_id]:
+    #                 file_info = user_schemas[user_id][0]
+    #                 suggestions = file_info.get("suggestions", {})
+    #                 suggested_entity = suggestions.get("target_column")
+    #                 if suggested_entity:
+    #                     parsed_updates["target_column"] = suggested_entity
+    #                     logger.info(f"[handle_chat] Setting entity_column to '{suggested_entity}' by fallback suggestion.")
+    #         # We do NOT overwrite target_column here, to avoid reverting it to e.g. "churn."
 
     #     logger.info(f"[handle_chat] Before update => {ps.__dict__}")
     #     logger.info(f"[handle_chat] parsed_updates => {parsed_updates}")
 
+    #     # Apply updates (includes fuzzy matching, etc.)
     #     updated_fields = update_predictive_settings(ps, parsed_updates, schema_columns)
     #     ps.refresh_from_db()
+
     #     logger.info(f"[handle_chat] After update => {ps.__dict__}")
     #     logger.info(f"[handle_chat] Updated fields => {updated_fields}")
 
-    #     # Reconstruct or retrieve conversation chain
+    #     # Build or retrieve conversation chain
     #     memory_key = f"{user_id}_{chat_id}"
     #     if memory_key not in user_conversations:
     #         restored_memory = ConversationBufferMemory(return_messages=True)
@@ -2560,16 +2645,16 @@ class UnifiedChatGPTAPI(APIView):
     #     else:
     #         conversation_chain = user_conversations[memory_key]
 
-    #     # Get GPT's answer
+    #     # Ask the LLM to respond
     #     assistant_response = conversation_chain.run(user_input=user_input)
 
-    #     # Save conversation
+    #     # Save messages to DB
     #     timestamp = datetime.datetime.now().isoformat()
     #     chat_obj.messages.append({"sender": "user", "text": user_input, "timestamp": timestamp})
     #     chat_obj.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": timestamp})
     #     chat_obj.save()
 
-    #     # Show 'Generate Notebook' if we have at least target + entity
+    #     # Only show "Generate Notebook" if we have a valid target & entity
     #     show_generate_notebook = bool(ps.target_column and ps.entity_column)
 
     #     return Response({
@@ -2583,6 +2668,7 @@ class UnifiedChatGPTAPI(APIView):
     #         "predictive_question": ps.predictive_question
     #     })
 
+
     def handle_chat(self, request):
         user_input = request.data.get("message", "").strip()
         user_id = request.data.get("user_id", "default_user")
@@ -2592,13 +2678,12 @@ class UnifiedChatGPTAPI(APIView):
         if not user_input:
             return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate user
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Possibly create a new chat
+        # Create or get the chat.
         if new_chat_flag or not chat_id:
             chat_obj, chat_id = self.create_new_chat(user, user_input)
         else:
@@ -2617,12 +2702,16 @@ class UnifiedChatGPTAPI(APIView):
                 )
                 user_conversations[memory_key] = conversation_chain
 
-        # Gather schema columns from the first uploaded file
+        # Retrieve the persisted file info for this chat.
+        from .models import ChatFileInfo
+        uploaded_file_info = ChatFileInfo.objects.filter(user=user, chat=chat_obj).order_by('-created_at').first()
         schema_columns = []
-        if user_id in user_schemas and user_schemas[user_id]:
-            schema_columns = [col["column_name"] for col in user_schemas[user_id][0]["schema"]]
+        if uploaded_file_info:
+            schema_columns = [col["column_name"] for col in uploaded_file_info.schema]
+        else:
+            logger.warning("No uploaded file info found for this chat; schema_columns will be empty.")
 
-        # Parse user input for changes
+        # Parse user input for updates.
         parsed_result = parse_nlu_input(
             system_prompt="Extract user instructions about target/entity/time_frame/time_column/time_frequency/predictive_question.",
             user_message=user_input,
@@ -2631,7 +2720,7 @@ class UnifiedChatGPTAPI(APIView):
         is_confirmation = parsed_result["is_confirmation"]
         explicit_updates = parsed_result["updates"]
 
-        # Get/Create PredictiveSettings
+        # Get or create PredictiveSettings.
         ps, created = PredictiveSettings.objects.get_or_create(
             user=user,
             chat_id=chat_id,
@@ -2648,41 +2737,34 @@ class UnifiedChatGPTAPI(APIView):
 
         parsed_updates = {}
         if explicit_updates:
-            # User explicitly changed something: "Target Column: X" or "Entity Column: Y", etc.
             parsed_updates = explicit_updates
             logger.info(f"[handle_chat] applying explicit updates: {parsed_updates}")
         elif is_confirmation:
-            # User said "yes" or "correct." If entity_column is still None, use suggestions.
-            # This ensures we default to "customerid" if user didn’t explicitly set an entity column.
-            if not ps.entity_column:  
-                if user_id in user_schemas and user_schemas[user_id]:
-                    file_info = user_schemas[user_id][0]
-                    suggestions = file_info.get("suggestions", {})
-                    suggested_entity = suggestions.get("entity_column")
-                    if suggested_entity:
-                        parsed_updates["entity_column"] = suggested_entity
-                        logger.info(f"[handle_chat] Setting entity_column to '{suggested_entity}' by fallback suggestion.")
-            if not ps.target_column:  
-                if user_id in user_schemas and user_schemas[user_id]:
-                    file_info = user_schemas[user_id][0]
-                    suggestions = file_info.get("suggestions", {})
-                    suggested_entity = suggestions.get("target_column")
-                    if suggested_entity:
-                        parsed_updates["target_column"] = suggested_entity
-                        logger.info(f"[handle_chat] Setting entity_column to '{suggested_entity}' by fallback suggestion.")
-            # We do NOT overwrite target_column here, to avoid reverting it to e.g. "churn."
+            # Use fallback suggestions from persisted file info.
+            if not ps.entity_column and uploaded_file_info:
+                suggestions = uploaded_file_info.suggestions or {}
+                suggested_entity = suggestions.get("entity_column")
+                if suggested_entity:
+                    parsed_updates["entity_column"] = suggested_entity
+                    logger.info(f"[handle_chat] Setting entity_column to '{suggested_entity}' by fallback suggestion.")
+            if not ps.target_column and uploaded_file_info:
+                suggestions = uploaded_file_info.suggestions or {}
+                suggested_target = suggestions.get("target_column")
+                if suggested_target:
+                    parsed_updates["target_column"] = suggested_target
+                    logger.info(f"[handle_chat] Setting target_column to '{suggested_target}' by fallback suggestion.")
 
         logger.info(f"[handle_chat] Before update => {ps.__dict__}")
         logger.info(f"[handle_chat] parsed_updates => {parsed_updates}")
 
-        # Apply updates (includes fuzzy matching, etc.)
+        # Apply updates (including fuzzy matching).
         updated_fields = update_predictive_settings(ps, parsed_updates, schema_columns)
         ps.refresh_from_db()
 
         logger.info(f"[handle_chat] After update => {ps.__dict__}")
         logger.info(f"[handle_chat] Updated fields => {updated_fields}")
 
-        # Build or retrieve conversation chain
+        # Build or retrieve conversation chain.
         memory_key = f"{user_id}_{chat_id}"
         if memory_key not in user_conversations:
             restored_memory = ConversationBufferMemory(return_messages=True)
@@ -2701,16 +2783,15 @@ class UnifiedChatGPTAPI(APIView):
         else:
             conversation_chain = user_conversations[memory_key]
 
-        # Ask the LLM to respond
+        # Ask the LLM to respond.
         assistant_response = conversation_chain.run(user_input=user_input)
 
-        # Save messages to DB
+        # Save messages to the chat history.
         timestamp = datetime.datetime.now().isoformat()
         chat_obj.messages.append({"sender": "user", "text": user_input, "timestamp": timestamp})
         chat_obj.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": timestamp})
         chat_obj.save()
 
-        # Only show "Generate Notebook" if we have a valid target & entity
         show_generate_notebook = bool(ps.target_column and ps.entity_column)
 
         return Response({
@@ -2723,6 +2804,7 @@ class UnifiedChatGPTAPI(APIView):
             "settings_updated": bool(updated_fields),
             "predictive_question": ps.predictive_question
         })
+
 
 
 
@@ -2806,10 +2888,161 @@ class UnifiedChatGPTAPI(APIView):
 
 
 
+    # def generate_notebook(self, request):
+    #     """
+    #     Reads final columns from PredictiveSettings. If we have a date column, do time-based approach; otherwise not.
+    #     """
+    #     user_id = request.data.get("user_id")
+    #     chat_id = request.data.get("chat_id")
+
+    #     if not user_id or not chat_id:
+    #         return Response({"error": "user_id and chat_id are required."},
+    #                         status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Validate user
+    #     try:
+    #         user = User.objects.get(id=user_id)
+    #     except User.DoesNotExist:
+    #         return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    #     # Validate chat
+    #     try:
+    #         ChatBackup.objects.get(user=user, chat_id=chat_id)
+    #     except ChatBackup.DoesNotExist:
+    #         return Response({"error": "Chat not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    #     # Pull from PredictiveSettings
+    #     try:
+    #         settings_obj = PredictiveSettings.objects.get(user=user, chat_id=chat_id)
+    #     except PredictiveSettings.DoesNotExist:
+    #         return Response({"error": "No predictive settings found. Please confirm columns first."},
+    #                         status=status.HTTP_400_BAD_REQUEST)
+
+    #     entity_id_column = settings_obj.entity_column
+    #     target_column = settings_obj.target_column
+    #     time_column = settings_obj.time_column
+    #     time_frame = settings_obj.time_frame
+    #     time_frequency = settings_obj.time_frequency
+
+    #     # Retrieve the file info from in-memory user_schemas (you could store it in DB if you prefer)
+    #     uploaded_file_info = None
+    #     if user_id in user_schemas and len(user_schemas[user_id]) > 0:
+    #         uploaded_file_info = user_schemas[user_id][0]
+    #     else:
+    #         return Response({"error": "Uploaded file info not found."},
+    #                         status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Prepare feature columns from suggestions or user input
+    #     feature_columns = []
+    #     if "suggestions" in uploaded_file_info:
+    #         feature_columns = uploaded_file_info["suggestions"].get("feature_columns", [])
+
+    #     # Basic validations
+    #     columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
+    #     if entity_id_column and entity_id_column not in columns_list:
+    #         return Response({"error": f"Entity ID column '{entity_id_column}' does not exist."},
+    #                         status=status.HTTP_400_BAD_REQUEST)
+    #     if target_column and target_column not in columns_list:
+    #         return Response({"error": f"Target column '{target_column}' does not exist."},
+    #                         status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Has date column?
+    #     has_date_column = uploaded_file_info.get('has_date_column', False)
+    #     file_url = uploaded_file_info.get('file_url')
+    #     table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
+    #     sanitized_table_name = self.sanitize_identifier(table_name_raw)
+
+    #     # Now the actual notebook creation (kept from your original code)...
+    #     if has_date_column and time_column:
+    #         # Time-based approach
+    #         final_time_frame = time_frame if time_frame else "1 WEEK"
+    #         final_notebook = self.create_dynamic_time_based_notebook(
+    #             entity_id_column=entity_id_column,
+    #             time_column=time_column,
+    #             target_column=target_column,
+    #             table_name=sanitized_table_name,
+    #             time_horizon=final_time_frame,
+    #             extra_features=feature_columns,
+    #             time_frequency=time_frequency
+    #         )
+    #         notebook_sanitized = self.sanitize_notebook(final_notebook)
+    #         notebook_json = nbformat.writes(notebook_sanitized, version=4)
+
+    #         # Save in DB
+    #         notebook = Notebook.objects.create(
+    #             user=user,
+    #             chat=chat_id,
+    #             entity_column=entity_id_column,
+    #             target_column=target_column,
+    #             time_column=time_column,
+    #             time_frame=final_time_frame,
+    #             time_frequency=time_frequency,
+    #             features=feature_columns,
+    #             file_url=file_url,
+    #             notebook_json=notebook_json
+    #         )
+
+    #         user_notebooks[user_id] = {'time_based_notebook': notebook_json}
+    #         return Response({
+    #             "message": "Notebook generated and saved successfully.",
+    #             "notebook_id": notebook.id,
+    #             "notebook_data": notebook_json
+    #         }, status=status.HTTP_200_OK)
+    #     else:
+    #         # Non time-based approach
+    #         notebook_entity_target = self.create_entity_target_notebook(
+    #             entity_id_column,
+    #             target_column,
+    #             sanitized_table_name,
+    #             columns_list
+    #         )
+    #         notebook_features = self.create_features_notebook(
+    #             feature_columns,
+    #             sanitized_table_name,
+    #             columns_list
+    #         )
+    #         notebook_entity_target_sanitized = self.sanitize_notebook(notebook_entity_target)
+    #         notebook_features_sanitized = self.sanitize_notebook(notebook_features)
+
+    #         notebook_entity_target_json = nbformat.writes(notebook_entity_target_sanitized, version=4)
+    #         notebook_features_json = nbformat.writes(notebook_features_sanitized, version=4)
+
+    #         notebook_entity_target_record = Notebook.objects.create(
+    #             user=user,
+    #             chat=chat_id,
+    #             entity_column=entity_id_column,
+    #             target_column=target_column,
+    #             features=feature_columns,
+    #             file_url=file_url,
+    #             notebook_json=notebook_entity_target_json
+    #         )
+
+    #         notebook_features_record = Notebook.objects.create(
+    #             user=user,
+    #             chat=chat_id,
+    #             entity_column=entity_id_column,
+    #             target_column=target_column,
+    #             features=feature_columns,
+    #             file_url=file_url,
+    #             notebook_json=notebook_features_json
+    #         )
+
+    #         user_notebooks[user_id] = {
+    #             'entity_target_notebook': notebook_entity_target_json,
+    #             'features_notebook': notebook_features_json
+    #         }
+
+    #         return Response({
+    #             "message": "Notebooks generated and saved successfully (non-time-based).",
+    #             "entity_target_notebook_id": notebook_entity_target_record.id,
+    #             "features_notebook_id": notebook_features_record.id,
+    #             "entity_target_notebook": notebook_entity_target_json,
+    #             "features_notebook": notebook_features_json
+    #         }, status=status.HTTP_200_OK)
+    
+
+
     def generate_notebook(self, request):
-        """
-        Reads final columns from PredictiveSettings. If we have a date column, do time-based approach; otherwise not.
-        """
         user_id = request.data.get("user_id")
         chat_id = request.data.get("chat_id")
 
@@ -2817,19 +3050,16 @@ class UnifiedChatGPTAPI(APIView):
             return Response({"error": "user_id and chat_id are required."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate user
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Validate chat
         try:
-            ChatBackup.objects.get(user=user, chat_id=chat_id)
+            chat_obj = ChatBackup.objects.get(user=user, chat_id=chat_id)
         except ChatBackup.DoesNotExist:
             return Response({"error": "Chat not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Pull from PredictiveSettings
         try:
             settings_obj = PredictiveSettings.objects.get(user=user, chat_id=chat_id)
         except PredictiveSettings.DoesNotExist:
@@ -2842,21 +3072,18 @@ class UnifiedChatGPTAPI(APIView):
         time_frame = settings_obj.time_frame
         time_frequency = settings_obj.time_frequency
 
-        # Retrieve the file info from in-memory user_schemas (you could store it in DB if you prefer)
-        uploaded_file_info = None
-        if user_id in user_schemas and len(user_schemas[user_id]) > 0:
-            uploaded_file_info = user_schemas[user_id][0]
-        else:
+        # Retrieve persisted file info for this chat.
+        from .models import ChatFileInfo
+        uploaded_file_info = ChatFileInfo.objects.filter(user=user, chat=chat_obj).order_by('-created_at').first()
+        if not uploaded_file_info:
             return Response({"error": "Uploaded file info not found."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Prepare feature columns from suggestions or user input
         feature_columns = []
-        if "suggestions" in uploaded_file_info:
-            feature_columns = uploaded_file_info["suggestions"].get("feature_columns", [])
+        if uploaded_file_info.suggestions:
+            feature_columns = uploaded_file_info.suggestions.get("feature_columns", [])
 
-        # Basic validations
-        columns_list = [col['column_name'] for col in uploaded_file_info['schema']]
+        columns_list = [col['column_name'] for col in uploaded_file_info.schema]
         if entity_id_column and entity_id_column not in columns_list:
             return Response({"error": f"Entity ID column '{entity_id_column}' does not exist."},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -2864,15 +3091,12 @@ class UnifiedChatGPTAPI(APIView):
             return Response({"error": f"Target column '{target_column}' does not exist."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Has date column?
-        has_date_column = uploaded_file_info.get('has_date_column', False)
-        file_url = uploaded_file_info.get('file_url')
-        table_name_raw = os.path.splitext(uploaded_file_info['name'])[0]
+        has_date_column = uploaded_file_info.has_date_column
+        file_url = uploaded_file_info.file_url
+        table_name_raw = os.path.splitext(uploaded_file_info.name)[0]
         sanitized_table_name = self.sanitize_identifier(table_name_raw)
 
-        # Now the actual notebook creation (kept from your original code)...
         if has_date_column and time_column:
-            # Time-based approach
             final_time_frame = time_frame if time_frame else "1 WEEK"
             final_notebook = self.create_dynamic_time_based_notebook(
                 entity_id_column=entity_id_column,
@@ -2886,7 +3110,6 @@ class UnifiedChatGPTAPI(APIView):
             notebook_sanitized = self.sanitize_notebook(final_notebook)
             notebook_json = nbformat.writes(notebook_sanitized, version=4)
 
-            # Save in DB
             notebook = Notebook.objects.create(
                 user=user,
                 chat=chat_id,
@@ -2907,7 +3130,6 @@ class UnifiedChatGPTAPI(APIView):
                 "notebook_data": notebook_json
             }, status=status.HTTP_200_OK)
         else:
-            # Non time-based approach
             notebook_entity_target = self.create_entity_target_notebook(
                 entity_id_column,
                 target_column,
@@ -2957,7 +3179,7 @@ class UnifiedChatGPTAPI(APIView):
                 "entity_target_notebook": notebook_entity_target_json,
                 "features_notebook": notebook_features_json
             }, status=status.HTTP_200_OK)
-    
+
 
 
 

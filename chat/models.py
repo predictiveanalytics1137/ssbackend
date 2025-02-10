@@ -75,43 +75,6 @@ from django.db import models
 from django.contrib.auth.models import User
 import uuid
 
-# class Chat(models.Model):
-#     user = models.ForeignKey(User, on_delete=models.CASCADE)
-#     chat_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-#     title = models.CharField(max_length=255)
-#     timestamp = models.DateTimeField(auto_now_add=True)
-
-# class Message(models.Model):
-#     chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name='messages')
-#     sender = models.CharField(max_length=50)  # 'user' or 'assistant'
-#     text = models.TextField()
-#     timestamp = models.DateTimeField(auto_now_add=True)
-
-
-
-# from django.contrib.auth.models import User
-# from django.db import models
-
-# class ChatBackup(models.Model):
-#     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chats")  # Links to `auth_user.id`
-#     chat_id = models.CharField(max_length=255, unique=True)  # Unique ID for each chat
-#     title = models.CharField(max_length=255)
-#     messages = models.JSONField()  # Store chat messages as JSON
-#     created_at = models.DateTimeField(auto_now_add=True)
-#     updated_at = models.DateTimeField(auto_now=True)
-#     # timestamp = models.DateTimeField(auto_now_add=True)
-
-
-# # Backup Chat Model
-# # class ChatBackup(models.Model):
-# #     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_backups")
-# #     chat_id = models.UUIDField(editable=False, unique=True)  # Same chat_id as in Chat
-# #     title = models.CharField(max_length=255)
-# #     messages = models.JSONField()  # Store chat messages as JSON
-# #     timestamp = models.DateTimeField
-
-#     def __str__(self):
-#         return f"{self.user.username} - {self.chat_id}"
 
 
 # models.py
@@ -129,26 +92,6 @@ class ChatBackup(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.chat_id}"
 
-
-
-# from django.db import models
-
-# class Notebook(models.Model):
-#     user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
-#     # chat = models.ForeignKey('ChatBackup', on_delete=models.CASCADE)
-#     chat = models.CharField(max_length=255)
-#     entity_column = models.CharField(max_length=255)
-#     target_column = models.CharField(max_length=255)
-#     time_column = models.CharField(max_length=255, null=True, blank=True)
-#     time_frame = models.CharField(max_length=255, null=True, blank=True)
-#     time_frequency = models.CharField(max_length=255, null=True, blank=True)
-#     features = models.JSONField()
-#     file_url = models.URLField()
-#     notebook_json = models.JSONField()
-#     created_at = models.DateTimeField(auto_now_add=True)
-
-#     def __str__(self):
-#         return f"Notebook for User {self.user.id}, Chat {self.chat.id}"
 
 
 # notebooks/models.py
@@ -205,3 +148,31 @@ class PredictiveSettings(models.Model):
     def __str__(self):
         return f"PredictiveSettings(user={self.user_id}, chat_id={self.chat_id})"
 
+
+
+
+# models.py
+from django.db import models
+from django.contrib.auth.models import User
+from django.conf import settings
+
+# (Existing models: UploadedFile, FileSchema, ChatBackup, Notebook, PredictiveSettings remain unchanged.)
+
+class ChatFileInfo(models.Model):
+    """
+    Stores file metadata (schema, suggestions, etc.) for a specific chat.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="chat_file_infos")
+    chat = models.ForeignKey('ChatBackup', on_delete=models.CASCADE, related_name="file_infos")
+    file = models.OneToOneField(UploadedFile, on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    file_url = models.CharField(max_length=1024)
+    schema = models.JSONField()  # List of dicts: [{ "column_name": ..., "data_type": ... }, ...]
+    suggestions = models.JSONField(null=True, blank=True)  # e.g. target_column, entity_column, feature_columns.
+    has_date_column = models.BooleanField(default=False)
+    date_columns = models.JSONField(null=True, blank=True)
+    glue_table_name = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ChatFileInfo for Chat {self.chat.chat_id} - {self.name}"

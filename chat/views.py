@@ -1939,6 +1939,84 @@ def suggest_entity_id_column(df: pd.DataFrame) -> Any:
     return None
 
 
+# def update_predictive_settings(ps, parsed_updates, schema_columns):
+#     """
+#     Update only fields explicitly mentioned in parsed_updates, with improved validation.
+#     Also keep predictive_question in sync if the target_column changes.
+#     """
+#     logger.info(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
+#     logger.info(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
+
+#     updateable_fields = [
+#         'target_column',
+#         'entity_column',
+#         'time_column',
+#         'predictive_question',
+#         'time_frame',
+#         'time_frequency',
+#     ]
+
+#     def validate_and_match(proposed_value, current_value):
+#         """Case-insensitive exact + fuzzy matching. If no match found, ask user to correct."""
+#         if not proposed_value:
+#             return current_value  # Keep existing if no new value
+
+#         # Attempt exact (case-insensitive) match
+#         for col in schema_columns:
+#             if col.lower() == proposed_value.lower():
+#                 return col
+
+#         # If no exact match, try fuzzy
+#         matches = difflib.get_close_matches(proposed_value, schema_columns, n=1, cutoff=0.6)
+#         if matches:
+#             return matches[0]
+
+#         # If no match, log a warning
+#         print(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
+#         logger.warning(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
+#         return current_value
+
+#     updated_fields = {}
+#     with transaction.atomic():
+#         for field in updateable_fields:
+#             if field in parsed_updates:
+#                 new_value = parsed_updates[field]
+#                 current_value = getattr(ps, field)
+
+#                 if field in ['target_column', 'entity_column', 'time_column']:
+#                     # Validate column name in schema
+#                     validated = validate_and_match(new_value, current_value)
+#                     if validated != current_value:
+#                         setattr(ps, field, validated)
+#                         updated_fields[field] = validated
+#                 else:
+#                     # For non-column fields (time_frame, time_frequency, predictive_question, etc.)
+#                     if new_value and new_value != current_value:
+#                         setattr(ps, field, new_value)
+#                         updated_fields[field] = new_value
+
+#         # ----------------------------
+#         # If the target_column changed, also auto-update the predictive_question (optional logic)
+#         # ----------------------------
+#         if 'target_column' in updated_fields:
+#             new_target = ps.target_column
+#             # You can incorporate time_frame or user text, or do a simple question:
+#             ps.predictive_question = f"How can we predict {new_target}?"
+#             updated_fields['predictive_question'] = ps.predictive_question
+
+#         if updated_fields:
+#             ps.save(update_fields=list(updated_fields.keys()))
+
+#     logger.info(f"[update_predictive_settings] Updated fields: {updated_fields}")
+#     return updated_fields
+
+
+from django.db import transaction
+import difflib
+import logging
+
+logger = logging.getLogger(__name__)
+
 def update_predictive_settings(ps, parsed_updates, schema_columns):
     """
     Update only fields explicitly mentioned in parsed_updates, with improved validation.
@@ -1946,6 +2024,8 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
     """
     logger.info(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
     logger.info(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
+    print(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
+    print(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
 
     updateable_fields = [
         'target_column',
@@ -1957,7 +2037,7 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
     ]
 
     def validate_and_match(proposed_value, current_value):
-        """Case-insensitive exact + fuzzy matching. If no match found, ask user to correct."""
+        """Case-insensitive exact + fuzzy matching. If no match found, keep the existing value."""
         if not proposed_value:
             return current_value  # Keep existing if no new value
 
@@ -1966,50 +2046,59 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
             if col.lower() == proposed_value.lower():
                 return col
 
-        # If no exact match, try fuzzy
+        # If no exact match, try fuzzy matching
         matches = difflib.get_close_matches(proposed_value, schema_columns, n=1, cutoff=0.6)
         if matches:
             return matches[0]
 
         # If no match, log a warning
+        print(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
         logger.warning(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
         return current_value
 
     updated_fields = {}
-    with transaction.atomic():
-        for field in updateable_fields:
-            if field in parsed_updates:
-                new_value = parsed_updates[field]
-                current_value = getattr(ps, field)
 
-                if field in ['target_column', 'entity_column', 'time_column']:
-                    # Validate column name in schema
-                    validated = validate_and_match(new_value, current_value)
-                    if validated != current_value:
-                        setattr(ps, field, validated)
-                        updated_fields[field] = validated
-                else:
-                    # For non-column fields (time_frame, time_frequency, predictive_question, etc.)
-                    if new_value and new_value != current_value:
-                        setattr(ps, field, new_value)
-                        updated_fields[field] = new_value
+    try:
+        with transaction.atomic():
+            print("[update_predictive_settings] Starting transaction...")
 
-        # ----------------------------
-        # If the target_column changed, also auto-update the predictive_question (optional logic)
-        # ----------------------------
-        if 'target_column' in updated_fields:
-            new_target = ps.target_column
-            # You can incorporate time_frame or user text, or do a simple question:
-            ps.predictive_question = f"How can we predict {new_target}?"
-            updated_fields['predictive_question'] = ps.predictive_question
+            for field in updateable_fields:
+                if field in parsed_updates:
+                    new_value = parsed_updates[field]
+                    current_value = getattr(ps, field)
 
-        if updated_fields:
-            ps.save(update_fields=list(updated_fields.keys()))
+                    if field in ['target_column', 'entity_column', 'time_column']:
+                        # Validate column name in schema
+                        validated = validate_and_match(new_value, current_value)
+                        if validated != current_value:
+                            setattr(ps, field, validated)
+                            updated_fields[field] = validated
+                    else:
+                        # For non-column fields (time_frame, time_frequency, predictive_question, etc.)
+                        if new_value and new_value != current_value:
+                            setattr(ps, field, new_value)
+                            updated_fields[field] = new_value
 
-    logger.info(f"[update_predictive_settings] Updated fields: {updated_fields}")
+            # ----------------------------
+            # If the target_column changed, also auto-update the predictive_question (optional logic)
+            # ----------------------------
+            if 'target_column' in updated_fields:
+                new_target = ps.target_column
+                ps.predictive_question = f"How can we predict {new_target}?"
+                updated_fields['predictive_question'] = ps.predictive_question
+
+            if updated_fields:
+                print(f"[update_predictive_settings] Fields to be updated: {updated_fields}")
+                ps.save(update_fields=list(updated_fields.keys()))
+                print("[update_predictive_settings] Database update committed successfully.")
+
+        logger.info(f"[update_predictive_settings] Updated fields: {updated_fields}")
+
+    except Exception as e:
+        print(f"[update_predictive_settings] Error occurred: {e}")
+        logger.error(f"[update_predictive_settings] Error occurred: {e}", exc_info=True)
+
     return updated_fields
-
-
 
 
 
@@ -3883,3 +3972,4 @@ class PredictiveSettingsDetailView(APIView):
                 {"error": "Settings not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
+        

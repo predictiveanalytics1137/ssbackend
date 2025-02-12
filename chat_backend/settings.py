@@ -176,3 +176,22 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = True  # Allow all domains to access your API (for development only)
+
+
+
+
+# Redis URL for Celery (Redis runs on localhost:6379 by default)
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+
+
+
+
+CELERY_RESULT_BACKEND = "redis://localhost:6379/0"  # Enables task result storage
+
+# Optional: Enable task result expiration (Deletes old results after 1 hour)
+CELERY_TASK_RESULT_EXPIRES = 3600
+
+# Optional: Accept only JSON responses
+CELERY_RESULT_SERIALIZER = "json"

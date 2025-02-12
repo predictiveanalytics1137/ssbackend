@@ -1078,19 +1078,20 @@ def train_pipeline(
         metadata_api_url = "http://127.0.0.1:8000/api/update_prediction_status/"
         entity_count = df.shape[0]
 
+
 # =============================================================================
-#         # Create the initial metadata
-#         response = requests.post(metadata_api_url, json={
-#             'prediction_id': training_id,
-#             'chat_id': chat_id,
-#             'user_id': user_id,
-#             'status': 'inprogress',
-#             'entity_count': entity_count,
-#             'start_time': start_time.isoformat()
-#         })
-#         if response.status_code != 201:
-#             logger.error(f"Failed to create metadata: {response.json()}")
-#             raise RuntimeError("Initial metadata creation failed.")
+        # Create the initial metadata
+        response = requests.post(metadata_api_url, json={
+            'prediction_id': training_id,
+            'chat_id': chat_id,
+            'user_id': user_id,
+            'status': 'inprogress',
+            'entity_count': entity_count,
+            'start_time': start_time.isoformat()
+        })
+        if response.status_code != 201:
+            logger.error(f"Failed to create metadata: {response.json()}")
+            raise RuntimeError("Initial metadata creation failed.")
 # =============================================================================
 
         ##########################################

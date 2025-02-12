@@ -23,6 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 Myenv
+venv
 .env
 __pycache__/
 chat/__pycache__/

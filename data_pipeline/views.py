@@ -909,3 +909,42 @@ class PredictDataAPI(APIView):
                 {"error": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+
+
+
+
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import DemoRequest
+from .serializers import DemoRequestSerializer
+
+# @api_view(['POST'])
+# def book_demo(request):
+#     serializer = DemoRequestSerializer(data=request.data)
+#     if serializer.is_valid():
+#         serializer.save()
+#         return Response({"message": "Demo request submitted successfully!", "data": serializer.data}, status=status.HTTP_201_CREATED)
+#     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+@api_view(['POST'])
+def book_demo(request):
+    # Check if an entry with this email already exists
+    email = request.data.get("email")
+    if DemoRequest.objects.filter(email=email).exists():
+        return Response({"error": "This email is already registered for a demo."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Proceed if email is unique
+    serializer = DemoRequestSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({"message": "Demo request submitted successfully!", "data": serializer.data}, status=status.HTTP_201_CREATED)
+    
+    # Print serializer errors in console for debugging
+    print("Serializer Errors:", serializer.errors)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+

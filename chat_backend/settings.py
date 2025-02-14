@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'accounts',
     'Sql_Notebook',
     'predictions_page',
+    'data_pipeline',
 ]
 
 

@@ -3459,6 +3459,18 @@ user_confirmations = {}
 user_notebook_flags = {}
 user_notebooks = {}
 
+# SYSTEM_INSTRUCTIONS = (
+#     "You are a highly intelligent and helpful PACX AI assistant. Your responses should be clear and concise. "
+#     "Assist the user in forming the predictive question and any corrections they provide. Reflect the confirmed or "
+#     "corrected schema back to the user before proceeding, asking one question at a time.\n\n"
+#     "Steps:\n"
+#     "1. Discuss the subject they want to predict.\n"
+#     "2. Confirm the target value they want to predict.\n"
+#     "3. Check if there's a specific time frame for the prediction (e.g., next month, 6 month, year).\n"
+#     "4. Reference the dataset schema if available; if not, ask to upload it.\n"
+#     "5. Once all necessary information is confirmed, provide a summary and let the user know they can generate the notebook."
+# )
+
 SYSTEM_INSTRUCTIONS = (
     "You are a highly intelligent and helpful PACX AI assistant. Your responses should be clear and concise. "
     "Assist the user in forming the predictive question and any corrections they provide. Reflect the confirmed or "
@@ -3466,9 +3478,10 @@ SYSTEM_INSTRUCTIONS = (
     "Steps:\n"
     "1. Discuss the subject they want to predict.\n"
     "2. Confirm the target value they want to predict.\n"
-    "3. Check if there's a specific time frame for the prediction (e.g., next month, 6 month, year).\n"
-    "4. Reference the dataset schema if available; if not, ask to upload it.\n"
-    "5. Once all necessary information is confirmed, provide a summary and let the user know they can generate the notebook."
+    "3. Check if there's a specific time frame for the prediction (e.g., next month, 6 month, year)\n"
+    "4. Determine whether the prediction should occur on a recurring basis (e.g., daily, weekly, monthly) or after a specific event.\n"
+    "5. Reference the dataset schema if available; if not, ask to upload it.\n"
+    "6. Once all necessary information is confirmed, provide a summary and let the user know they can generate the notebook."
 )
 
 chat_prompt = ChatPromptTemplate.from_messages([
@@ -3711,10 +3724,95 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# def update_predictive_settings(ps, parsed_updates, schema_columns):
+#     """
+#     Update only fields explicitly mentioned in parsed_updates, with improved validation.
+#     Also keep predictive_question in sync if the target_column changes.
+#     """
+#     logger.info(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
+#     logger.info(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
+#     print(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
+#     print(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
+
+#     updateable_fields = [
+#         'target_column',
+#         'entity_column',
+#         'time_column',
+#         'predictive_question',
+#         'time_frame',
+#         'time_frequency',
+#     ]
+
+#     def validate_and_match(proposed_value, current_value):
+#         """Case-insensitive exact + fuzzy matching. If no match found, keep the existing value."""
+#         if not proposed_value:
+#             return current_value  # Keep existing if no new value
+
+#         # Attempt exact (case-insensitive) match
+#         for col in schema_columns:
+#             if col.lower() == proposed_value.lower():
+#                 return col
+
+#         # If no exact match, try fuzzy matching
+#         matches = difflib.get_close_matches(proposed_value, schema_columns, n=1, cutoff=0.6)
+#         if matches:
+#             return matches[0]
+
+#         # If no match, log a warning
+#         print(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
+#         logger.warning(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
+#         return current_value
+
+#     updated_fields = {}
+
+#     try:
+#         with transaction.atomic():
+#             print("[update_predictive_settings] Starting transaction...")
+
+#             for field in updateable_fields:
+#                 if field in parsed_updates:
+#                     new_value = parsed_updates[field]
+#                     current_value = getattr(ps, field)
+
+#                     if field in ['target_column', 'entity_column', 'time_column']:
+#                         # Validate column name in schema
+#                         validated = validate_and_match(new_value, current_value)
+#                         if validated != current_value:
+#                             setattr(ps, field, validated)
+#                             updated_fields[field] = validated
+#                     else:
+#                         # For non-column fields (time_frame, time_frequency, predictive_question, etc.)
+#                         if new_value and new_value != current_value:
+#                             setattr(ps, field, new_value)
+#                             updated_fields[field] = new_value
+
+#             # ----------------------------
+#             # If the target_column changed, also auto-update the predictive_question (optional logic)
+#             # ----------------------------
+#             if 'target_column' in updated_fields:
+#                 new_target = ps.target_column
+#                 ps.predictive_question = f"How can we predict {new_target}?"
+#                 updated_fields['predictive_question'] = ps.predictive_question
+
+#             if updated_fields:
+#                 print(f"[update_predictive_settings] Fields to be updated: {updated_fields}")
+#                 ps.save(update_fields=list(updated_fields.keys()))
+#                 print("[update_predictive_settings] Database update committed successfully.")
+
+#         logger.info(f"[update_predictive_settings] Updated fields: {updated_fields}")
+
+#     except Exception as e:
+#         print(f"[update_predictive_settings] Error occurred: {e}")
+#         logger.error(f"[update_predictive_settings] Error occurred: {e}", exc_info=True)
+
+#     return updated_fields
+
+
+
 def update_predictive_settings(ps, parsed_updates, schema_columns):
     """
     Update only fields explicitly mentioned in parsed_updates, with improved validation.
-    Also keep predictive_question in sync if the target_column changes.
+    Also auto-update the predictive_question based on target_column, time_frequency, time_frame, and entity_column.
     """
     logger.info(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
     logger.info(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
@@ -3745,7 +3843,6 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
         if matches:
             return matches[0]
 
-        # If no match, log a warning
         print(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
         logger.warning(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
         return current_value
@@ -3773,13 +3870,17 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
                             setattr(ps, field, new_value)
                             updated_fields[field] = new_value
 
-            # ----------------------------
-            # If the target_column changed, also auto-update the predictive_question (optional logic)
-            # ----------------------------
-            if 'target_column' in updated_fields:
-                new_target = ps.target_column
-                ps.predictive_question = f"How can we predict {new_target}?"
-                updated_fields['predictive_question'] = ps.predictive_question
+            # If any of these fields have been updated, auto-generate a predictive question
+            # only if the user did not provide an explicit predictive_question.
+            if ('target_column' in updated_fields or 'time_frequency' in updated_fields or 'time_frame' in updated_fields or 'entity_column' in updated_fields):
+                if not parsed_updates.get('predictive_question'):
+                    # Use defaults if any field is missing.
+                    freq = ps.time_frequency if ps.time_frequency else "weekly"
+                    frame = ps.time_frame if ps.time_frame else "30 days"
+                    target = ps.target_column if ps.target_column else "target"
+                    entity = ps.entity_column if ps.entity_column else "each record"
+                    ps.predictive_question = f"Predict {freq}, the {target} for {entity} in the next {frame}"
+                    updated_fields['predictive_question'] = ps.predictive_question
 
             if updated_fields:
                 print(f"[update_predictive_settings] Fields to be updated: {updated_fields}")
@@ -3793,7 +3894,6 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
         logger.error(f"[update_predictive_settings] Error occurred: {e}", exc_info=True)
 
     return updated_fields
-
 
 
 

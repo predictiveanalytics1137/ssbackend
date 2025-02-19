@@ -31,3 +31,4 @@ chat/__pycache__/
 # Ignore .pyc files
 *.pyc
 venv
+uploads

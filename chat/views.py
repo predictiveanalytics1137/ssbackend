@@ -164,7 +164,7 @@ def normalize_column_name(col_name: str) -> str:
 # -----------------------------------------------------------------------------------
 # Multi-Format Date Parser
 # -----------------------------------------------------------------------------------
-def parse_dates_with_known_formats(series: pd.Series, possible_formats=None, dayfirst=False) -> pd.Series:
+# def parse_dates_with_known_formats(series: pd.Series, possible_formats=None, dayfirst=False) -> pd.Series:
     """
     Try multiple known formats & pick the one that parses the most rows successfully.
     If more than half remain null, fallback to dateutil guess (infer_datetime_format=True).
@@ -203,7 +203,7 @@ def parse_dates_with_known_formats(series: pd.Series, possible_formats=None, day
 # -----------------------------------------------------------------------------------
 # Data Type Inference (int, bigint, double, boolean, timestamp, string)
 # -----------------------------------------------------------------------------------
-def infer_column_dtype(series: pd.Series, threshold: float = 0.6) -> str:
+# def infer_column_dtype(series: pd.Series, threshold: float = 0.6) -> str:
     """
     Attempt to infer the most likely data type of a pandas Series.
     This uses 'errors=coerce' for date parsing + threshold-based classification.
@@ -261,6 +261,160 @@ def infer_column_dtype(series: pd.Series, threshold: float = 0.6) -> str:
 
     # Default to string
     return "string"
+
+def parse_dates_with_known_formats(series: pd.Series, possible_formats=None, dayfirst=False) -> pd.Series:
+    if possible_formats is None:
+        possible_formats = [
+            "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d",
+            "%m-%d-%Y", "%Y.%m.%d", "%d.%m.%Y",
+            "%b %d %Y", "%d %b %Y", "%Y %b %d",
+            "%B %d %Y", "%d %B %Y", "%Y %B %d",
+            "%Y-%m-%d %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S",
+            "%Y%m%d", "%d%m%Y", "%m%d%Y"
+        ]
+
+    total_count = len(series)
+    parsed_series = pd.Series(pd.NaT, index=series.index)
+    valid_masks = {}
+
+    for fmt in possible_formats:
+        parsed = pd.to_datetime(series, format=fmt, errors="coerce")
+        valid = parsed.notnull() & (parsed >= pd.Timestamp("1900-01-01")) & (parsed <= pd.Timestamp("2100-12-31"))
+        valid_count = valid.sum()
+        print(f"[DEBUG] Parsing with {fmt}: Valid {valid_count}/{total_count}")
+        valid_masks[fmt] = valid
+        parsed_series = parsed_series.where(parsed_series.notnull(), parsed)
+
+    combined_valid = pd.Series(False, index=series.index)
+    for mask in valid_masks.values():
+        combined_valid |= mask
+    nulls = total_count - combined_valid.sum()
+    print(f"[DEBUG] Combined parse: Nulls {nulls}/{total_count}")
+
+    if nulls > (0.5 * total_count) and "date" in series.name.lower():
+        parsed_flex = pd.to_datetime(series, errors="coerce")
+        valid_flex = parsed_flex.notnull() & (parsed_flex >= pd.Timestamp("1900-01-01")) & (parsed_flex <= pd.Timestamp("2100-12-31"))
+        valid_count_flex = valid_flex.sum()
+        print(f"[DEBUG] Flexible parse fallback: Valid {valid_count_flex}/{total_count}")
+        parsed_series = parsed_series.where(parsed_series.notnull(), parsed_flex)
+
+    parsed_final = parsed_series.fillna(pd.Timestamp("1970-01-01"))
+    print(f"[DEBUG] Final nulls filled with '1970-01-01': Nulls {parsed_final.isnull().sum()}/{total_count}")
+    return parsed_final
+
+
+
+
+
+def infer_column_dtype(series: pd.Series, threshold: float = 0.6) -> str:
+    series = series.dropna()
+    if series.empty:
+        print(f"[DEBUG] Column is empty after dropna, defaulting to string")
+        return "string"
+    
+    total_count = len(series)
+    col_name = series.name.lower() if series.name else ""
+
+    # Boolean check first (numeric 0/1 or true/false equivalents)
+    unique_values = set(series.astype(str).str.lower().unique())
+    boolean_patterns = {'true', 'false', '1', '0', 'yes', 'no', 't', 'f', 'y', 'n'}
+    
+    # Try numeric conversion to check for 0/1
+    try:
+        numeric_series = pd.to_numeric(series, errors='raise')
+        unique_nums = set(numeric_series.unique())
+        if len(unique_nums) == 2 and {0, 1}.issubset(unique_nums) and not (numeric_series < 0).any() and not (numeric_series > 1).any():
+            print(f"[DEBUG] Detected as boolean (numeric 0/1)")
+            return "boolean"
+    except ValueError:
+        pass  # Proceed to string-based boolean check if not numeric
+
+    # Check string patterns for exactly 2 unique values
+    if len(unique_values) == 2 and unique_values.issubset(boolean_patterns):
+        if unique_values.issubset({'true', 'false'}):
+            print(f"[DEBUG] Detected as boolean (true/false)")
+            return "boolean"
+        if unique_values.issubset({'yes', 'no'}):
+            print(f"[DEBUG] Detected as boolean (yes/no)")
+            return "boolean"
+        if unique_values.issubset({'t', 'f'}):
+            print(f"[DEBUG] Detected as boolean (t/f)")
+            return "boolean"
+        if unique_values.issubset({'y', 'n'}):
+            print(f"[DEBUG] Detected as boolean (y/n)")
+            return "boolean"
+        if unique_values.issubset({'1', '0'}):
+            print(f"[DEBUG] Detected as boolean (string 0/1)")
+            return "boolean"
+
+    # Date formats (only if column name suggests date or high validity)
+    date_formats = [
+        "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d",
+        "%m-%d-%Y", "%Y.%m.%d", "%d.%m.%Y",
+        "%b %d %Y", "%d %b %Y", "%Y %b %d",
+        "%B %d %Y", "%d %B %Y", "%Y %B %d",
+        "%Y-%m-%d %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S",
+        "%Y%m%d", "%d%m%Y", "%m%d%Y"
+    ]
+    
+    valid_masks = {}
+    for fmt in date_formats:
+        dt_series = pd.to_datetime(series, format=fmt, errors='coerce')
+        valid = dt_series.notnull()
+        valid_count = valid.sum()
+        valid_ratio = valid_count / total_count
+        # Ensure dates are within a reasonable range (1900-2100)
+        if valid_count > 0:
+            valid &= (dt_series >= pd.Timestamp("1900-01-01")) & (dt_series <= pd.Timestamp("2100-12-31"))
+            valid_count = valid.sum()
+            valid_ratio = valid_count / total_count
+        print(f"[DEBUG] Format {fmt}: Valid {valid_count}/{total_count} ({valid_ratio:.2f})")
+        valid_masks[fmt] = valid
+        if valid_ratio >= threshold:
+            print(f"[DEBUG] Detected as timestamp with format {fmt}")
+            return "timestamp"
+
+    # Combine valid date parses
+    combined_valid = pd.Series(False, index=series.index)
+    for mask in valid_masks.values():
+        combined_valid |= mask
+    combined_valid_count = combined_valid.sum()
+    combined_valid_ratio = combined_valid_count / total_count
+    print(f"[DEBUG] Combined date formats: Valid {combined_valid_count}/{total_count} ({combined_valid_ratio:.2f})")
+    if combined_valid_ratio >= threshold and ("date" in col_name or combined_valid_ratio > 0.9):
+        print(f"[DEBUG] Detected as timestamp with combined formats")
+        return "timestamp"
+
+    # Flexible parse only if column name suggests date
+    if "date" in col_name:
+        dt_series_flex = pd.to_datetime(series, errors='coerce')
+        valid_flex = dt_series_flex.notnull() & (dt_series_flex >= pd.Timestamp("1900-01-01")) & (dt_series_flex <= pd.Timestamp("2100-12-31"))
+        valid_count_flex = valid_flex.sum()
+        valid_ratio_flex = valid_count_flex / total_count
+        print(f"[DEBUG] Flexible parse: Valid {valid_count_flex}/{total_count} ({valid_ratio_flex:.2f})")
+        if valid_ratio_flex >= threshold:
+            print(f"[DEBUG] Detected as timestamp with flexible parse")
+            return "timestamp"
+
+    # Numeric checks (after boolean and date)
+    try:
+        numeric_series = pd.to_numeric(series, errors='raise')
+        if (numeric_series % 1 == 0).all():
+            if numeric_series.min() >= -2147483648 and numeric_series.max() <= 2147483647:
+                print(f"[DEBUG] Detected as int ({numeric_series.min()} to {numeric_series.max()})")
+                return "int"
+            else:
+                print(f"[DEBUG] Detected as bigint ({numeric_series.min()} to {numeric_series.max()})")
+                return "bigint"
+        else:
+            print(f"[DEBUG] Detected as double ({numeric_series.min()} to {numeric_series.max()})")
+            return "double"
+    except ValueError:
+        print(f"[DEBUG] Not numeric")
+
+    print(f"[DEBUG] Defaulting to string")
+    return "string"
+
 
 # -----------------------------------------------------------------------------------
 # Standardize Timestamp Columns

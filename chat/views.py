@@ -469,12 +469,10 @@ logger = logging.getLogger(__name__)
 def update_predictive_settings(ps, parsed_updates, schema_columns):
     """
     Update only fields explicitly mentioned in parsed_updates, with improved validation.
-    Also auto-update the predictive_question based on target_column, time_frequency, time_frame, and entity_column.
+    Now includes machine_learning_type with strict validation.
     """
     logger.info(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
     logger.info(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
-    print(f"[update_predictive_settings] Parsed updates: {parsed_updates}")
-    print(f"[update_predictive_settings] Current PS values: {ps.__dict__}")
 
     updateable_fields = [
         'target_column',
@@ -483,24 +481,19 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
         'predictive_question',
         'time_frame',
         'time_frequency',
+        'machine_learning_type'  # Already added in previous example, kept here
     ]
 
     def validate_and_match(proposed_value, current_value):
-        """Case-insensitive exact + fuzzy matching. If no match found, keep the existing value."""
+        """Case-insensitive exact + fuzzy matching for columns."""
         if not proposed_value:
-            return current_value  # Keep existing if no new value
-
-        # Attempt exact (case-insensitive) match
+            return current_value
         for col in schema_columns:
             if col.lower() == proposed_value.lower():
                 return col
-
-        # If no exact match, try fuzzy matching
         matches = difflib.get_close_matches(proposed_value, schema_columns, n=1, cutoff=0.6)
         if matches:
             return matches[0]
-
-        print(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
         logger.warning(f"No column match found for '{proposed_value}'. Keeping old value '{current_value}'.")
         return current_value
 
@@ -508,8 +501,6 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
 
     try:
         with transaction.atomic():
-            print("[update_predictive_settings] Starting transaction...")
-
             for field in updateable_fields:
                 if field in parsed_updates:
                     new_value = parsed_updates[field]
@@ -520,12 +511,20 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
                         if validated != current_value:
                             setattr(ps, field, validated)
                             updated_fields[field] = validated
+                    elif field == 'machine_learning_type':
+                        # Strict validation: only accept valid ML types
+                        if new_value in ["classification", "regression"]:
+                            if new_value != current_value:
+                                setattr(ps, field, new_value)
+                                updated_fields[field] = new_value
+                        elif new_value is not None:  # Allow None, but log invalid values
+                            logger.warning(f"Invalid machine_learning_type '{new_value}', keeping '{current_value}'")
                     else:
-                        if new_value and new_value != current_value:
+                        if new_value != current_value:  # Allow None for other fields
                             setattr(ps, field, new_value)
                             updated_fields[field] = new_value
 
-            # If any of these fields have been updated, auto-generate a predictive question
+            # Auto-generate predictive question if needed
             if ('target_column' in updated_fields or 'time_frequency' in updated_fields 
                 or 'time_frame' in updated_fields or 'entity_column' in updated_fields):
                 if not parsed_updates.get('predictive_question'):
@@ -537,14 +536,10 @@ def update_predictive_settings(ps, parsed_updates, schema_columns):
                     updated_fields['predictive_question'] = ps.predictive_question
 
             if updated_fields:
-                print(f"[update_predictive_settings] Fields to be updated: {updated_fields}")
                 ps.save(update_fields=list(updated_fields.keys()))
-                print("[update_predictive_settings] Database update committed successfully.")
 
         logger.info(f"[update_predictive_settings] Updated fields: {updated_fields}")
-
     except Exception as e:
-        print(f"[update_predictive_settings] Error occurred: {e}")
         logger.error(f"[update_predictive_settings] Error occurred: {e}", exc_info=True)
 
     return updated_fields
@@ -833,7 +828,7 @@ class UnifiedChatGPTAPI(APIView):
         user_conversations[memory_key] = conversation_chain
         return chat_obj, chat_id
 
-    def handle_chat(self, request):
+    # def handle_chat(self, request):
         user_input = request.data.get("message", "").strip()
         user_id = request.data.get("user_id", "default_user")
         chat_id = request.data.get("chat_id")
@@ -961,6 +956,197 @@ class UnifiedChatGPTAPI(APIView):
             "settings_updated": bool(updated_fields),
             "predictive_question": ps.predictive_question
         })
+    
+
+    def handle_chat(self, request):
+        user_input = request.data.get("message", "").strip()
+        user_id = request.data.get("user_id", "default_user")
+        chat_id = request.data.get("chat_id")
+        new_chat_flag = request.data.get("new_chat", False)
+
+        if not user_input:
+            return Response({"error": "No input provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Create or get the chat
+        if new_chat_flag or not chat_id:
+            chat_obj, chat_id = self.create_new_chat(user, user_input)
+        else:
+            chat_obj, _ = ChatBackup.objects.get_or_create(
+                user=user,
+                chat_id=chat_id,
+                defaults={"title": user_input[:50], "messages": []}
+            )
+            if not chat_obj.messages:
+                memory_key = f"{user_id}_{chat_id}"
+                conversation_chain = ConversationChain(
+                    llm=llm_chatgpt,
+                    prompt=chat_prompt,
+                    input_key="user_input",
+                    memory=ConversationBufferMemory(return_messages=True)
+                )
+                user_conversations[memory_key] = conversation_chain
+
+        # Get schema and file info
+        from .models import ChatFileInfo
+        uploaded_file_info = ChatFileInfo.objects.filter(user=user, chat=chat_obj).order_by('-created_at').first()
+        schema_columns = []
+        if uploaded_file_info:
+            schema_columns = [col["column_name"] for col in uploaded_file_info.schema]
+        else:
+            logger.warning("No uploaded file info found for this chat; schema_columns will be empty.")
+
+        # Parse user input
+        parsed_result = parse_nlu_input(
+            system_prompt="Extract user instructions about target/entity/time_frame/time_column/time_frequency/predictive_question.",
+            user_message=user_input,
+            schema_columns=schema_columns
+        )
+        is_confirmation = parsed_result["is_confirmation"]
+        explicit_updates = parsed_result["updates"]
+
+        # Get or create PredictiveSettings with no default machine_learning_type
+        ps, created = PredictiveSettings.objects.get_or_create(
+            user=user,
+            chat_id=chat_id,
+            defaults={
+                'target_column': None,
+                'entity_column': None,
+                'time_column': None,
+                'predictive_question': None,
+                'time_frame': None,
+                'time_frequency': None,
+                'machine_learning_type': None  # CHANGED: No default, starts as None
+            }
+        )
+
+        # Prepare updates and determine machine_learning_type
+        parsed_updates = {}
+        if explicit_updates:
+            parsed_updates = explicit_updates
+            logger.info(f"[handle_chat] Applying explicit updates: {parsed_updates}")
+        elif is_confirmation:
+            # Fallback suggestions
+            if not ps.entity_column and uploaded_file_info:
+                suggestions = uploaded_file_info.suggestions or {}
+                suggested_entity = suggestions.get("entity_column")
+                if suggested_entity:
+                    parsed_updates["entity_column"] = suggested_entity
+                    logger.info(f"[handle_chat] Setting entity_column to '{suggested_entity}' by fallback suggestion.")
+            if not ps.target_column and uploaded_file_info:
+                suggestions = uploaded_file_info.suggestions or {}
+                suggested_target = suggestions.get("target_column")
+                if suggested_target:
+                    parsed_updates["target_column"] = suggested_target
+                    logger.info(f"[handle_chat] Setting target_column to '{suggested_target}' by fallback suggestion.")
+
+        # --- NEW: Determine machine_learning_type with high accuracy ---
+        predictive_question = parsed_updates.get('predictive_question') or ps.predictive_question
+        target_column = parsed_updates.get('target_column') or ps.target_column
+
+        if predictive_question or target_column:
+            ml_type_from_question = None
+            ml_type_from_data = None
+
+            # Step 1: Classify based on predictive question if available
+            if predictive_question:
+                ml_type_from_question = classify_ml_type(predictive_question)
+                logger.info(f"[handle_chat] Classified ML type from question '{predictive_question}': {ml_type_from_question}")
+
+            # Step 2: Infer from target column data if available
+            if target_column and uploaded_file_info:
+                schema_dict = {col["column_name"]: col["data_type"] for col in uploaded_file_info.schema}
+                target_dtype = schema_dict.get(target_column)
+                if target_dtype:
+                    if target_dtype in ["int", "bigint", "double"]:
+                        ml_type_from_data = "regression"
+                    elif target_dtype in ["string", "boolean"]:
+                        ml_type_from_data = "classification"
+                    else:
+                        ml_type_from_data = None  # Unknown or unsupported type
+                    logger.info(f"[handle_chat] Inferred ML type from target column '{target_column}' ({target_dtype}): {ml_type_from_data}")
+
+            # Step 3: Validate and reconcile ML type
+            final_ml_type = None
+            if ml_type_from_question and ml_type_from_data:
+                if ml_type_from_question == ml_type_from_data:
+                    final_ml_type = ml_type_from_question
+                    logger.info(f"[handle_chat] ML type confirmed: '{final_ml_type}' (question and data agree)")
+                else:
+                    logger.warning(f"[handle_chat] Conflict: Question suggests '{ml_type_from_question}', data suggests '{ml_type_from_data}'. Prioritizing data.")
+                    final_ml_type = ml_type_from_data  # Data-driven type takes precedence for accuracy
+            elif ml_type_from_question and not ml_type_from_data:
+                final_ml_type = ml_type_from_question if ml_type_from_question != "unknown" else None
+                logger.info(f"[handle_chat] ML type set to '{final_ml_type}' from question (no data validation possible)")
+            elif ml_type_from_data and not ml_type_from_question:
+                final_ml_type = ml_type_from_data
+                logger.info(f"[handle_chat] ML type set to '{final_ml_type}' from data (no question provided)")
+            else:
+                logger.info("[handle_chat] Insufficient info to determine ML type, keeping as None")
+
+            # Step 4: Only set if we have a valid, confirmed type
+            if final_ml_type in ["classification", "regression"]:
+                parsed_updates["machine_learning_type"] = final_ml_type
+            else:
+                parsed_updates["machine_learning_type"] = None  # Remains None if unclear
+
+        # --- END NEW SECTION ---
+
+        logger.info(f"[handle_chat] Before update => {ps.__dict__}")
+        logger.info(f"[handle_chat] parsed_updates => {parsed_updates}")
+
+        updated_fields = update_predictive_settings(ps, parsed_updates, schema_columns)
+        ps.refresh_from_db()
+
+        logger.info(f"[handle_chat] After update => {ps.__dict__}")
+        logger.info(f"[handle_chat] Updated fields => {updated_fields}")
+
+        # Rest of conversation handling
+        memory_key = f"{user_id}_{chat_id}"
+        if memory_key not in user_conversations:
+            restored_memory = ConversationBufferMemory(return_messages=True)
+            for msg in chat_obj.messages:
+                if msg["sender"] == "assistant":
+                    restored_memory.chat_memory.add_message(AIMessage(content=msg["text"]))
+                else:
+                    restored_memory.chat_memory.add_message(HumanMessage(content=msg["text"]))
+            conversation_chain = ConversationChain(
+                llm=llm_chatgpt,
+                prompt=chat_prompt,
+                input_key="user_input",
+                memory=restored_memory
+            )
+            user_conversations[memory_key] = conversation_chain
+        else:
+            conversation_chain = user_conversations[memory_key]
+
+        assistant_response = conversation_chain.run(user_input=user_input)
+
+        timestamp = datetime.datetime.now().isoformat()
+        chat_obj.messages.append({"sender": "user", "text": user_input, "timestamp": timestamp})
+        chat_obj.messages.append({"sender": "assistant", "text": assistant_response, "timestamp": timestamp})
+        chat_obj.save()
+
+        show_generate_notebook = bool(ps.target_column and ps.entity_column)
+
+        return Response({
+            "response": assistant_response,
+            "chat_id": chat_id,
+            "show_generate_notebook": show_generate_notebook,
+            "corrected_target_column": ps.target_column,
+            "corrected_entity_column": ps.entity_column,
+            "corrected_time_column": ps.time_column,
+            "settings_updated": bool(updated_fields),
+            "predictive_question": ps.predictive_question,
+            "machine_learning_type": ps.machine_learning_type  # Include in response for visibility
+        })
+
+
+
 
     def reset_conversation(self, request):
         user_id = request.data.get("user_id", "default_user")

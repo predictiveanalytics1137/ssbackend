@@ -181,22 +181,24 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
         logger.info(f"Features after embedded method: {X_embedded_filtered.shape[1]}")
 
         # 4. Wrapper Method (RFE)
-        if top_n_features and top_n_features < X_embedded_filtered.shape[1]:
-            logger.info(f"Applying RFE for top {top_n_features} features...")
-            if task == "regression":
-                rfe_model = RandomForestRegressor(random_state=42)
-            else:
-                rfe_model = RandomForestClassifier(random_state=42)
+        # if top_n_features and top_n_features < X_embedded_filtered.shape[1]:
+        #     logger.info(f"Applying RFE for top {top_n_features} features...")
+        #     if task == "regression":
+        #         rfe_model = RandomForestRegressor(random_state=42)
+        #     else:
+        #         rfe_model = RandomForestClassifier(random_state=42)
 
-            rfe_selector = RFE(rfe_model, n_features_to_select=top_n_features, step=1)
-            X_rfe = rfe_selector.fit_transform(X_embedded_filtered, y)
-            rfe_cols = X_embedded_filtered.columns[rfe_selector.get_support()]
-            X_final = pd.DataFrame(X_rfe, columns=rfe_cols)
-            selected_features = list(rfe_cols)
-        else:
-            X_final = X_embedded_filtered
-            selected_features = list(X_embedded_filtered.columns)
-
+        #     rfe_selector = RFE(rfe_model, n_features_to_select=top_n_features, step=1)
+        #     X_rfe = rfe_selector.fit_transform(X_embedded_filtered, y)
+        #     rfe_cols = X_embedded_filtered.columns[rfe_selector.get_support()]
+        #     X_final = pd.DataFrame(X_rfe, columns=rfe_cols)
+        #     selected_features = list(rfe_cols)
+        # else:
+        #     X_final = X_embedded_filtered
+        #     selected_features = list(X_embedded_filtered.columns)
+        #this both lines can be removed
+        selected_features = list(X_embedded_filtered.columns)
+        X_final = X_embedded_filtered
         # Combine final features with target
         df_final = pd.concat([X_final, y.reset_index(drop=True)], axis=1)
 

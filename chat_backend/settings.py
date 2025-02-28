@@ -180,7 +180,45 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = True  # Allow all domains to access your API (for development only)
 
 
-
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        },
+    },
+    'handlers': {
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': 'logs/app.log',
+            'formatter': 'standard',
+        },
+    },
+    'loggers': {
+        '': {  # Root logger
+            'handlers': ['file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'celery': {
+            'handlers': ['file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'data_pipeline': {
+            'handlers': ['file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'automation.scripts.train_pipeline': {
+            'handlers': ['file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
 
 # Redis URL for Celery (Redis runs on localhost:6379 by default)
 CELERY_BROKER_URL = "redis://localhost:6379/0"
@@ -197,3 +235,5 @@ CELERY_TASK_RESULT_EXPIRES = 3600
 
 # Optional: Accept only JSON responses
 CELERY_RESULT_SERIALIZER = "json"
+
+

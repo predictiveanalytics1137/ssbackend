@@ -362,7 +362,7 @@ import featuretools as ft
 #v3
 
 
-
+# before time series
 
 import featuretools as ft
 import numpy as np
@@ -523,6 +523,97 @@ def feature_engineering(
             return feature_matrix, new_feature_defs, potential_binary_cols
         else:
             return feature_matrix
+
+    except Exception as e:
+        logger.error(f"Error in feature_engineering: {e}")
+        raise
+
+
+
+
+
+def feature_engineering_timeseries(
+    df,
+    target_column=None,
+    id_column=None,
+    time_column=None,
+    training=True,
+    feature_defs=None,
+    dataframe_name="demand"
+):
+    try:
+        if df.empty:
+            raise ValueError("DataFrame is empty; cannot perform feature engineering.")
+
+        if time_column and time_column in df.columns:
+            df[time_column] = pd.to_datetime(df[time_column], errors="coerce")
+
+        if "index" not in df.columns:
+            df["index"] = range(len(df))
+        df = df.reset_index(drop=True)
+
+        es = ft.EntitySet(id="entity_set")
+        es.add_dataframe(
+            dataframe_name=dataframe_name,
+            dataframe=df,
+            index="index",
+            time_index=time_column if time_column in df.columns else None
+        )
+
+        if id_column and id_column in df.columns:
+            entity_df = df[[id_column]].drop_duplicates().reset_index(drop=True)
+            es.add_dataframe(
+                dataframe_name="entities",
+                dataframe=entity_df,
+                index=id_column
+            )
+            es.add_relationship("entities", id_column, dataframe_name, id_column)
+
+        agg_primitives = ["mean", "sum", "count"]
+        trans_primitives = ["month"] if time_column else []
+
+        if training:
+            cutoff_times = df[["index", time_column]].rename(columns={time_column: "time"}) if time_column in df.columns else None
+            feature_matrix, new_feature_defs = ft.dfs(
+                entityset=es,
+                target_dataframe_name=dataframe_name,
+                cutoff_time=cutoff_times,
+                agg_primitives=agg_primitives,
+                trans_primitives=trans_primitives,
+                max_depth=2,
+                verbose=False
+            )
+            if target_column and target_column in df.columns:
+                feature_matrix[target_column] = df[target_column].reindex(feature_matrix.index)
+        else:
+            if feature_defs is None:
+                raise RuntimeError("Feature definitions must be provided for prediction.")
+            available_cols = set(df.columns)
+            computable_defs = [
+                f for f in feature_defs if all(
+                    isinstance(dep, str) and dep in available_cols
+                    for dep in f.get_dependencies(deep=True) or []
+                )
+            ]
+            if not computable_defs:
+                logger.info("No computable Featuretools features; returning input DataFrame.")
+                return df
+            feature_matrix = ft.calculate_feature_matrix(
+                features=computable_defs,
+                entityset=es,
+                verbose=False
+            )
+            new_feature_defs = feature_defs
+
+        feature_matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
+        numeric_cols = feature_matrix.select_dtypes(include=['float64', 'int64']).columns
+        if not numeric_cols.empty:
+            feature_matrix[numeric_cols] = feature_matrix[numeric_cols].fillna(0)
+        if id_column and id_column in df.columns:
+            feature_matrix[id_column] = df[id_column].reindex(feature_matrix.index)
+
+        logger.info(f"Generated features: {feature_matrix.columns.tolist()}")
+        return (feature_matrix, new_feature_defs) if training else feature_matrix
 
     except Exception as e:
         logger.error(f"Error in feature_engineering: {e}")

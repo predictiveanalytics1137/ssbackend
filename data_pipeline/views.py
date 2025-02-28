@@ -763,6 +763,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from .tasks import train_model_task  # Import Celery task
 from celery.result import AsyncResult
+from automation.src.logging_config import get_logger
+logger = get_logger(__name__)
 
 class DataForAutomationAPI(APIView):
     """
@@ -776,6 +778,9 @@ class DataForAutomationAPI(APIView):
         column_id = data.get("column_id")
         user_id = data.get("user_id")
         chat_id = data.get("chat_id")
+        ml_type = data.get("ml_type", False)  # Default to False if not provided
+
+        logger.info(f"Received training request | user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
 
         # Validate required parameters
         if not file_url or not target_column or not user_id or not chat_id:
@@ -784,13 +789,29 @@ class DataForAutomationAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Trigger training asynchronously
-        task = train_model_task.delay(file_url, target_column, user_id, chat_id, column_id)
+        # Trigger training asynchronously based on ml_type
+        try:
+            # Trigger training asynchronously based on ml_type
+            #task = train_model_task.delay(file_url, target_column, user_id, chat_id, column_id, ml_type)
+            task = train_model_task(file_url, target_column, user_id, chat_id, column_id, ml_type)
 
-        return Response(
-            {"message": "Training started", "task_id": task.id},
-            status=status.HTTP_202_ACCEPTED,
-        )
+            # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
+            # return Response(
+            #     {"message": "Training started", "task_id": task.id},
+            #     status=status.HTTP_202_ACCEPTED,
+            # )
+            logger.info(f"Training task triggered successfully | Task ID: {task}")
+            return Response(
+                {"message": "Training completed", "result": task},
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.error(f"Error while triggering training: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 # API to check training status

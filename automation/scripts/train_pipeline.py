@@ -127,11 +127,14 @@
 
 import os
 import sys
+
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pandas as pd
 import boto3
 from io import StringIO
 from src.pipeline import train_pipeline
+from src.time_series_pipeline import train_pipeline_timeseries
 from src.logging_config import get_logger
 
 # Ensure proper path resolution
@@ -175,7 +178,7 @@ def fetch_csv_from_s3(s3_path):
         raise
 
 # ✅ Function to trigger pipeline from API (Callable by Celery)
-def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id, use_time_series=False):
+def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id):
     """
     Trigger the training pipeline asynchronously.
     """
@@ -192,17 +195,48 @@ def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id, use
             user_id=user_id,
             chat_id=chat_id,
             column_id=column_id,
-            time_column=None if not use_time_series else "timestamp",
-            freq=None if not use_time_series else "D",
-            forecast_horizon=0 if not use_time_series else 30,
-            use_time_series=use_time_series
         )
 
         logger.info(f"Training completed successfully for user {user_id}.")
         print(f"Training completed successfully for user {user_id}.")
         print(f"Training completed successfully for user {chat_id}.")
-        return {"status": "success", "best_model": str(best_model), "best_params": best_params}
+        # return {"status": "success", "best_model": str(best_model), "best_params": best_params}
+        return best_model, best_params
 
     except Exception as e:
         logger.error(f"Training failed: {e}")
-        return {"status": "failed", "error": str(e)}
+        # return {"status": "failed", "error": str(e)}
+        return None, {"status": "failed", "error": str(e)}
+
+
+
+def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, column_id, time_column="analysis_time", freq="weekly", forecast_horizon="30 days"):
+    """
+    Trigger the time-series training pipeline asynchronously.
+    """
+    try:
+        logger.info(f"Starting time-series training for user_id={user_id}, chat_id={chat_id}")
+        
+        # Fetch data from S3
+        df = fetch_csv_from_s3(file_url)
+        
+        # Run the time-series training pipeline
+        best_model, best_params = train_pipeline_timeseries(
+            df=df,
+            target_column=target_column,
+            user_id=user_id,
+            chat_id=chat_id,
+            column_id=column_id,
+            time_column=time_column,
+            freq=freq,
+            forecast_horizon=forecast_horizon,
+            use_time_series=True
+        )
+
+        logger.info(f"Time-series training completed successfully for user {user_id}.")
+        
+        return best_model, best_params
+
+    except Exception as e:
+        logger.error(f"Time-series training failed: {e}", exc_info=True)
+        return None, {"status": "failed", "error": str(e)}

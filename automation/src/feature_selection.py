@@ -113,6 +113,7 @@ logger = get_logger(__name__)
 
 # v2
 
+
 import pandas as pd
 import numpy as np
 from sklearn.feature_selection import VarianceThreshold, SelectFromModel, RFE
@@ -145,15 +146,19 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
         else:
             id_data = None
 
-        X = df.drop(columns=[target_column])
+        # Exclude analysis_time from feature selection but preserve it
+        analysis_time = df['analysis_time'].copy() if 'analysis_time' in df.columns else None
+        X = df.drop(columns=[target_column, 'analysis_time'], errors='ignore')
         y = df[target_column]
 
         # 1. Variance Threshold
         logger.info("Applying VarianceThreshold to remove low-variance features...")
+        numeric_X = X.select_dtypes(include=['float64', 'int64'])
         variance_selector = VarianceThreshold(threshold=variance_threshold)
-        X_var_filtered = variance_selector.fit_transform(X)
-        retained_cols = X.columns[variance_selector.get_support()]
-        X_var_filtered = pd.DataFrame(X_var_filtered, columns=retained_cols)
+        X_var_filtered = variance_selector.fit_transform(numeric_X)
+        # Use numeric_X.columns for the mask to match the transformed data
+        retained_cols = numeric_X.columns[variance_selector.get_support()]
+        X_var_filtered = pd.DataFrame(X_var_filtered, columns=retained_cols, index=X.index)
         logger.info(f"Features after variance filter: {X_var_filtered.shape[1]}")
 
         # 2. Correlation Filter
@@ -177,7 +182,7 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
         embedded_selector = SelectFromModel(model, prefit=True)
         X_embedded_filtered = embedded_selector.transform(X_corr_filtered)
         embedded_cols = X_corr_filtered.columns[embedded_selector.get_support()]
-        X_embedded_filtered = pd.DataFrame(X_embedded_filtered, columns=embedded_cols)
+        X_embedded_filtered = pd.DataFrame(X_embedded_filtered, columns=embedded_cols, index=X_corr_filtered.index)
         logger.info(f"Features after embedded method: {X_embedded_filtered.shape[1]}")
 
         # 4. Wrapper Method (RFE)
@@ -199,8 +204,11 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
         #this both lines can be removed
         selected_features = list(X_embedded_filtered.columns)
         X_final = X_embedded_filtered
-        # Combine final features with target
+
+        # Combine final features with target and reattach analysis_time
         df_final = pd.concat([X_final, y.reset_index(drop=True)], axis=1)
+        if analysis_time is not None:
+            df_final['analysis_time'] = analysis_time.reindex(df_final.index)
 
         # Add back ID column
         if id_column and id_data is not None:

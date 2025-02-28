@@ -843,93 +843,174 @@ import requests
 from io import BytesIO
 
 
-class PredictDataAPI(APIView):
+# class PredictDataAPI(APIView):
+#     """
+#     Endpoint: /api/predict-data/
+#     Modified to start the predict.py script with a file URL.
+#     """
+
+#     def post(self, request):
+#         print("in the predictions")
+#         print("[DEBUG] PredictDataAPI: Received POST request.")
+#         print("[DEBUG] Request data:", request.data)
+
+#         # Extract data from the request
+#         file_url = request.data.get("file_url")
+#         bucket_name = request.data.get("bucket_name")
+#         column_id = request.data.get("column_id")
+#         print(f"[DEBUG] Extracted file_url: {file_url}, bucket_name: {bucket_name}")
+
+#         # Validate request data
+#         if not file_url:
+#             print("[ERROR] Missing file_url in request data.")
+#             return Response(
+#                 {"error": "Missing required data: file_url"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             # Full path to the predict.py script
+#             # script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\predict.py"
+#             script_path = r"C:\sandy2\ssbackend\automation\scripts\predict.py"
+#             print(f"[DEBUG] Script path: {script_path}")
+
+#             # Construct the command to run predict.py
+#             command = [
+#                 "python", 
+#                 script_path, 
+#                 "--file_url", file_url, 
+#                 "--bucket_name", bucket_name,
+#                 "--column_id", column_id
+#             ]
+#             print(f"[DEBUG] Constructed command: {' '.join(command)}")
+
+#             # Run the command and capture the output
+#             print("[DEBUG] Starting subprocess to run predict.py...")
+#             process = subprocess.run(
+#                 command,
+#                 text=True,
+#                 stdout=subprocess.PIPE,
+#                 stderr=subprocess.PIPE
+#             )
+#             print(f"[DEBUG] Subprocess finished with return code: {process.returncode}")
+
+#             if process.returncode != 0:
+#                 print("[ERROR] predict.py failed:")
+#                 print(process.stderr)
+#                 return Response(
+#                     {
+#                         "error": "Failed to execute predict.py",
+#                         "details": process.stderr,
+#                     },
+#                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#                 )
+
+#             print("[DEBUG] predict.py succeeded. Output:")
+#             print(process.stdout)
+#             predictions = process.stdout.strip()
+#             return Response(
+#                 {
+#                     "message": "Prediction completed successfully.",
+#                     "predictions": predictions,
+#                 },
+#                 status=status.HTTP_200_OK,
+#             )
+
+#         except requests.exceptions.RequestException as e:
+#             print("[ERROR] Failed to download file:")
+#             print(str(e))
+#             return Response(
+#                 {"error": f"Failed to download file: {str(e)}"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+#         except Exception as e:
+#             print("[ERROR] Exception occurred while running predict.py:")
+#             print(str(e))
+#             return Response(
+#                 {"error": f"An error occurred: {str(e)}"},
+#                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             )
+
+
+
+
+
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .tasks import predict_model_task  # Import Celery task
+from celery.result import AsyncResult
+from automation.src.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+class DataForPredictionsAPI(APIView):
     """
-    Endpoint: /api/predict-data/
-    Modified to start the predict.py script with a file URL.
+    API to trigger prediction asynchronously based on ml_type.
+    Triggers predict_new_data if ml_type is False, predict_future_timeseries if ml_type is True.
     """
 
     def post(self, request):
-        print("in the predictions")
-        print("[DEBUG] PredictDataAPI: Received POST request.")
-        print("[DEBUG] Request data:", request.data)
+        data = request.data
+        file_url = data.get("file_url")  # URL or path to the prediction dataset
+        column_id = data.get("column_id")
+        user_id = data.get("user_id")
+        chat_id = data.get("chat_id")
+        ml_type = data.get("ml_type", False)  # Default to False if not provided
 
-        # Extract data from the request
-        file_url = request.data.get("file_url")
-        bucket_name = request.data.get("bucket_name")
-        column_id = request.data.get("column_id")
-        print(f"[DEBUG] Extracted file_url: {file_url}, bucket_name: {bucket_name}")
+        logger.info(f"Received prediction request | user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
 
-        # Validate request data
-        if not file_url:
-            print("[ERROR] Missing file_url in request data.")
+        # Validate required parameters
+        if not file_url or not column_id or not user_id or not chat_id:
             return Response(
-                {"error": "Missing required data: file_url"},
+                {"error": "Missing required fields (file_url, column_id, user_id, chat_id)"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Trigger prediction asynchronously based on ml_type
         try:
-            # Full path to the predict.py script
-            # script_path = r"C:\New PA\backend-ss\ssbackend\automation\scripts\predict.py"
-            script_path = r"C:\sandy2\ssbackend\automation\scripts\predict.py"
-            print(f"[DEBUG] Script path: {script_path}")
+            # task = predict_model_task.delay(file_url, column_id, user_id, chat_id, ml_type)
+            task = predict_model_task(file_url, column_id, user_id, chat_id, ml_type)
 
-            # Construct the command to run predict.py
-            command = [
-                "python", 
-                script_path, 
-                "--file_url", file_url, 
-                "--bucket_name", bucket_name,
-                "--column_id", column_id
-            ]
-            print(f"[DEBUG] Constructed command: {' '.join(command)}")
-
-            # Run the command and capture the output
-            print("[DEBUG] Starting subprocess to run predict.py...")
-            process = subprocess.run(
-                command,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            print(f"[DEBUG] Subprocess finished with return code: {process.returncode}")
-
-            if process.returncode != 0:
-                print("[ERROR] predict.py failed:")
-                print(process.stderr)
-                return Response(
-                    {
-                        "error": "Failed to execute predict.py",
-                        "details": process.stderr,
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            print("[DEBUG] predict.py succeeded. Output:")
-            print(process.stdout)
-            predictions = process.stdout.strip()
+            # logger.info(f"Prediction task triggered successfully | Task ID: {task.id}")
+            logger.info(f"Prediction task triggered successfully | Task ID: {task}")
+            # return Response(
+            #     {"message": "Prediction started", "task_id": task.id},
+            #     status=status.HTTP_202_ACCEPTED,
+            # )
             return Response(
-                {
-                    "message": "Prediction completed successfully.",
-                    "predictions": predictions,
-                },
-                status=status.HTTP_200_OK,
+                {"message": "Prediction started", "task_id": task},
+                status=status.HTTP_202_ACCEPTED,
             )
 
-        except requests.exceptions.RequestException as e:
-            print("[ERROR] Failed to download file:")
-            print(str(e))
-            return Response(
-                {"error": f"Failed to download file: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         except Exception as e:
-            print("[ERROR] Exception occurred while running predict.py:")
-            print(str(e))
+            logger.error(f"Error while triggering prediction: {str(e)}", exc_info=True)
             return Response(
-                {"error": f"An error occurred: {str(e)}"},
+                {"error": "Internal server error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+    def get(self, request, task_id):
+        """
+        Check the status of a prediction task.
+        """
+        try:
+            task_result = AsyncResult(task_id)
+            result = {
+                "task_id": task_id,
+                "status": task_result.status,
+                "result": task_result.result if task_result.successful() else None
+            }
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error retrieving task status: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "Task not found or internal error"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
 
 
 

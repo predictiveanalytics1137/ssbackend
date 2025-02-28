@@ -187,6 +187,10 @@ def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id):
         
         # Fetch data from S3
         df = fetch_csv_from_s3(file_url)
+
+        # # Drop unwanted columns
+        # df = df.drop(columns=["entity_id", "date"], errors="ignore")
+
         
         # Run the training pipeline
         best_model, best_params = train_pipeline(
@@ -219,6 +223,10 @@ def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, col
         
         # Fetch data from S3
         df = fetch_csv_from_s3(file_url)
+
+
+        # Drop unwanted columns
+        df = df.drop(columns=["entity_id", "date"], errors="ignore")
         
         # Run the time-series training pipeline
         best_model, best_params = train_pipeline_timeseries(

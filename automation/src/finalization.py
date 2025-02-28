@@ -1170,7 +1170,7 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
         logger.info("Saving final model to S3...")
         bucket_name = "artifacts1137"
         prefix = f"ml-artifacts/{chat_id}/"
-        model_key = f"final_model_{chat_id}.joblib"
+        model_key = f"final_model.joblib"
         with io.BytesIO() as f:
             joblib.dump(final_model, f)
             f.seek(0)

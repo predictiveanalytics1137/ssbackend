@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'Sql_Notebook',
     'predictions_page',
     'data_pipeline',
+    'predictionfile',
 ]
 
 

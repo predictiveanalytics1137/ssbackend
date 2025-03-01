@@ -120,35 +120,54 @@ class Notebook(models.Model):
 
 
 
+# from django.db import models
+# from django.contrib.auth.models import User
+
+# class PredictiveSettings(models.Model):
+#     """
+#     Stores user-chosen predictive columns/settings for each chat in the database.
+#     """
+#     user = models.ForeignKey(User, on_delete=models.CASCADE)
+#     chat_id = models.CharField(max_length=255)
+
+#     # Possible fields the user might set
+#     target_column = models.CharField(max_length=255, null=True, blank=True)
+#     entity_column = models.CharField(max_length=255, null=True, blank=True)
+#     time_frame = models.CharField(max_length=255, null=True, blank=True)
+#     predictive_question = models.TextField(null=True, blank=True)
+
+#     # You can add others as needed: time_column, time_frequency, etc.
+#     time_column = models.CharField(max_length=255, null=True, blank=True)
+#     time_frequency = models.CharField(max_length=255, null=True, blank=True)
+
+
+#     machine_learning_type = models.CharField(max_length=50, null=True, blank=True)
+
+#     updated_at = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return f"PredictiveSettings(user={self.user_id}, chat_id={self.chat_id})"
+
+
 from django.db import models
 from django.contrib.auth.models import User
 
+
 class PredictiveSettings(models.Model):
-    """
-    Stores user-chosen predictive columns/settings for each chat in the database.
-    """
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     chat_id = models.CharField(max_length=255)
-
-    # Possible fields the user might set
     target_column = models.CharField(max_length=255, null=True, blank=True)
     entity_column = models.CharField(max_length=255, null=True, blank=True)
     time_frame = models.CharField(max_length=255, null=True, blank=True)
     predictive_question = models.TextField(null=True, blank=True)
-
-    # You can add others as needed: time_column, time_frequency, etc.
     time_column = models.CharField(max_length=255, null=True, blank=True)
     time_frequency = models.CharField(max_length=255, null=True, blank=True)
-
-
     machine_learning_type = models.CharField(max_length=50, null=True, blank=True)
-
+    features = models.JSONField(null=True, blank=True, default=list)  # NEW: Store feature list as JSON
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"PredictiveSettings(user={self.user_id}, chat_id={self.chat_id})"
-
-
 
 
 # models.py

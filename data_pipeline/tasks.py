@@ -50,7 +50,7 @@ import pandas as pd
 logger = get_logger(__name__)
 
 @shared_task(bind=True)
-def predict_model_task(self, file_url, column_id, user_id, chat_id, ml_type):
+def predict_model_task(self, file_url, column_id, user_id, chat_id, prediction_id, ml_type ):
     """
     Celery task to trigger prediction based on ml_type.
     Triggers predict_new_data if ml_type is False, predict_future_timeseries if ml_type is True.
@@ -82,12 +82,12 @@ def predict_model_task(self, file_url, column_id, user_id, chat_id, ml_type):
             # df = fetch_csv_from_s3(file_url)
 
         # Drop unwanted columns
-        df = df.drop(columns=["entity_id", "date","target_within_30_days_after"], errors="ignore")
+        # df = df.drop(columns=["entity_id", "date","target_within_30_days_after"], errors="ignore")
 
         # Determine prediction function based on ml_type
         if ml_type:
             logger.info("Performing time-series prediction...")
-            result_df = predict_future_timeseries(df, chat_id, time_column="analysis_time", column_id=column_id, target_column="daily_demand")
+            result_df = predict_future_timeseries(df, chat_id, user_id=user_id, time_column="analysis_time", column_id=column_id, target_column="daily_demand", prediction_id=prediction_id)  # Assuming predict_future_timeseries exists
         else:
             logger.info("Performing regular prediction...")
             result_df = predict_new_data(df, chat_id, column_id=column_id)  # Assuming predict_new_data exists

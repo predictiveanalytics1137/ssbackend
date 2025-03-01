@@ -958,9 +958,10 @@ class DataForPredictionsAPI(APIView):
         column_id = data.get("column_id")
         user_id = data.get("user_id")
         chat_id = data.get("chat_id")
+        prediction_id = data.get("prediction_id")
         ml_type = data.get("ml_type", False)  # Default to False if not provided
 
-        logger.info(f"Received prediction request | user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
+        logger.info(f"Received prediction request | user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}, prediction_id={prediction_id}")
 
         # Validate required parameters
         if not file_url or not column_id or not user_id or not chat_id:
@@ -972,7 +973,7 @@ class DataForPredictionsAPI(APIView):
         # Trigger prediction asynchronously based on ml_type
         try:
             # task = predict_model_task.delay(file_url, column_id, user_id, chat_id, ml_type)
-            task = predict_model_task(file_url, column_id, user_id, chat_id, ml_type)
+            task = predict_model_task(file_url, column_id, user_id, chat_id, prediction_id, ml_type)
 
             # logger.info(f"Prediction task triggered successfully | Task ID: {task.id}")
             logger.info(f"Prediction task triggered successfully | Task ID: {task}")

@@ -1586,8 +1586,6 @@ class PredictionDatasetUploadAPI(APIView):
                         delimiter=',',
                         na_values=['NA', 'N/A', ''],
                         on_bad_lines='error',
-                        # parse_dates=['date'],  # Explicitly parse the 'date' column
-                        # date_parser=lambda x: pd.to_datetime(x, format='%d-%m-%Y %H:%M:%S', errors='coerce')
                     )
                 else:
                     df = pd.read_excel(file, engine='openpyxl')
@@ -1729,7 +1727,7 @@ class PredictionDatasetUploadAPI(APIView):
                     file_instance.save()
 
                     # Store the schema and metadata in PredictionFileInfo
-                    PredictionFileInfo.objects.create(
+                    prediction_file_info = PredictionFileInfo.objects.create(
                         user=user,
                         chat=chat_id,
                         file=file_instance,
@@ -1739,6 +1737,7 @@ class PredictionDatasetUploadAPI(APIView):
                         has_date_column=has_date_column,
                         date_columns=possible_date_cols,
                     )
+                    prediction_id = str(prediction_file_info.id)  # Use PredictionFileInfo ID as prediction_id
 
                     file_size_mb = file.size / (1024 * 1024)
 
@@ -1748,7 +1747,7 @@ class PredictionDatasetUploadAPI(APIView):
 
                     # Determine column roles using PredictiveSettings (if available) and schema
                     predictive_settings = PredictiveSettings.objects.filter(user_id=user_id, chat_id=chat_id).first()
-                    generator = PredictionQueryGenerator(file_info=PredictionFileInfo.objects.get(file=file_instance))
+                    generator = PredictionQueryGenerator(file_info=prediction_file_info)  # Use the created PredictionFileInfo
                     if predictive_settings:
                         generator.update_with_predictive_settings(predictive_settings)
 
@@ -1781,7 +1780,8 @@ class PredictionDatasetUploadAPI(APIView):
                         'prediction_results': {
                             'sampling_results': results["sampling_query"].to_dict(orient='records') if not results["sampling_query"].empty else [],
                             'feature_results': results["feature_query"].to_dict(orient='records') if not results["feature_query"].empty else []
-                        }
+                        },
+                        'prediction_id': prediction_id  # Use the PredictionFileInfo ID
                     }
                     uploaded_files_info.append(file_info)
 

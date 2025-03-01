@@ -1121,24 +1121,24 @@ def fetch_csv_from_s3(s3_path):
 
 #this is for testing
 # Define input data
-input_data = {
-    "file_url": "s3://testingfiles-pacx/predict_f7_2.csv",
-    "column_id": "product_id",
-    "user_id": "17236",
-    "chat_id": "7236389",
-    "ml_type": True
-}
-df = fetch_csv_from_s3(input_data["file_url"])
-# Drop unwanted columns
-df = df.drop(columns=["entity_id"], errors="ignore")
-# Call prediction function
-predictions_df = predict_future_timeseries(
-    input_df=df,
-    chat_id=input_data["chat_id"],
-    time_column="analysis_time",
-    column_id=input_data["column_id"],
-    target_column="target_within_30_days_after"
-)
+# input_data = {
+#     "file_url": "s3://testingfiles-pacx/predict_f7_2.csv",
+#     "column_id": "product_id",
+#     "user_id": "17236",
+#     "chat_id": "7236389",
+#     "ml_type": True
+# }
+# df = fetch_csv_from_s3(input_data["file_url"])
+# # Drop unwanted columns
+# df = df.drop(columns=["entity_id"], errors="ignore")
+# # Call prediction function
+# predictions_df = predict_future_timeseries(
+#     input_df=df,
+#     chat_id=input_data["chat_id"],
+#     time_column="analysis_time",
+#     column_id=input_data["column_id"],
+#     target_column="target_within_30_days_after"
+# )
 
 
 

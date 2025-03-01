@@ -1888,6 +1888,7 @@ class NotebookView(APIView):
                     "features": notebook.features,
                     "file_url": notebook.file_url,
                     "notebook_json": notebook.notebook_json,
+                    "cell_s3_links": notebook.cell_s3_links,
                     "created_at": notebook.created_at,
                 }
                 for notebook in notebooks

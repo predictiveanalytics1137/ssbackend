@@ -15,7 +15,7 @@ logger.info(f"we are in tasks.py")
 @shared_task(bind=True)
 def train_model_task(self, file_url, target_column, user_id, chat_id, column_id, ml_type):
     try:
-        logger.info(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
+        logger.info(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}, file_url={file_url}, target_column={target_column}, column_id={column_id}")
         print(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
         
         if ml_type:

@@ -775,12 +775,19 @@ class DataForAutomationAPI(APIView):
         data = request.data
         file_url = data.get("file_url")
         target_column = data.get("target_column")
-        column_id = data.get("column_id")
+        entity_column = data.get("entity_column")
         user_id = data.get("user_id")
         chat_id = data.get("chat_id")
-        ml_type = data.get("ml_type", False)  # Default to False if not provided
+        prediction_type = data.get("prediction_type", False)  # Default to False if not provided
+        time_frame = data.get("time_frame")  # Default to False if not provided
+        time_frequency = data.get("time_frequency")  # Default to False if not provided
+        machine_learning_type = data.get("machine_learning_type")  # Default to False if not provided
+        time_column = data.get("time_column")  # Default to False if not provided
+        new_target_column = data.get("new_target_column")  # Default to False if not provided
+        
 
-        logger.info(f"Received training request | user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
+
+        logger.info(f"Received training request | user_id={user_id}, chat_id={chat_id}, prediction_type={prediction_type}, file_url={file_url}, target_column={target_column}, entity_column={entity_column}, time_frame={time_frame}, time_frequency={time_frequency}, machine_learning_type={machine_learning_type}, time_column={time_column}, new_target_column={new_target_column}")
 
         # Validate required parameters
         if not file_url or not target_column or not user_id or not chat_id:
@@ -793,8 +800,20 @@ class DataForAutomationAPI(APIView):
         try:
             # Trigger training asynchronously based on ml_type
             #task = train_model_task.delay(file_url, target_column, user_id, chat_id, column_id, ml_type)
-            task = train_model_task(file_url, target_column, user_id, chat_id, column_id, ml_type)
-
+            task = train_model_task(file_url=file_url,
+                                    target_column=target_column, 
+                                    user_id=user_id, 
+                                    chat_id=chat_id, 
+                                    entity_column=entity_column, 
+                                    prediction_type=prediction_type, 
+                                    time_frame = time_frame, 
+                                    time_frequency = time_frequency, 
+                                    machine_learning_type = machine_learning_type,
+                                    time_column = time_column,
+                                    new_target_column = new_target_column)      
+            # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
+            # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
+            # task = train_model_task.delay(file_url=file_url, target_column=target_column, user_id=user_id, chat_id=chat_id, entity_column=entity_column, prediction_type=prediction_type, time_frame = time_frame, time_frequency = time_frequency,machine_learning_type = machine_learning_type ,time_column =time_column)      # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
             # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
             # return Response(
             #     {"message": "Training started", "task_id": task.id},

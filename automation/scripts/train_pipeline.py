@@ -213,8 +213,7 @@ def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id):
         return None, {"status": "failed", "error": str(e)}
 
 
-
-def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, column_id, time_column="analysis_time", freq="weekly", forecast_horizon="30 days"):
+def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, entity_column, time_column, time_frame, time_frequency, prediction_type, machine_learning_type, new_target_column):
     """
     Trigger the time-series training pipeline asynchronously.
     """
@@ -226,7 +225,7 @@ def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, col
 
 
         # Drop unwanted columns
-        df = df.drop(columns=["entity_id", "date"], errors="ignore")
+        # df = df.drop(columns=["entity_id", "date"], errors="ignore")
         
         # Run the time-series training pipeline
         best_model, best_params = train_pipeline_timeseries(
@@ -234,11 +233,13 @@ def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, col
             target_column=target_column,
             user_id=user_id,
             chat_id=chat_id,
-            column_id=column_id,
+            entity_column=entity_column,
             time_column=time_column,
-            freq=freq,
-            forecast_horizon=forecast_horizon,
-            use_time_series=True
+            freq=time_frequency,
+            forecast_horizon=time_frame,
+            use_time_series=prediction_type,
+            machine_learning_type=machine_learning_type,
+            new_target_column=new_target_column
         )
 
         logger.info(f"Time-series training completed successfully for user {user_id}.")

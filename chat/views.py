@@ -1228,9 +1228,16 @@ class UnifiedChatGPTAPI(APIView):
         table_name_raw = os.path.splitext(uploaded_file_info.name)[0]
         sanitized_table_name = self.sanitize_identifier(table_name_raw)
 
+
+        # Determine prediction_type based on notebook type
+        prediction_type = True if has_date_column and time_column else False
+        # Update PredictiveSettings with prediction_type
+        settings_obj.prediction_type = prediction_type
+        settings_obj.save()
+
         if has_date_column and time_column:
             final_time_frame = time_frame if time_frame else "1 WEEK"
-            final_notebook = self.create_dynamic_time_based_notebook(
+            final_notebook, new_target_column = self.create_dynamic_time_based_notebook(
                 entity_id_column=entity_id_column,
                 time_column=time_column,
                 target_column=target_column,
@@ -1239,6 +1246,11 @@ class UnifiedChatGPTAPI(APIView):
                 extra_features=feature_columns,
                 time_frequency=time_frequency
             )
+
+             # Update PredictiveSettings with the new target column
+            settings_obj.new_target_column = new_target_column
+            settings_obj.save()
+
             notebook_sanitized = self.sanitize_notebook(final_notebook)
             notebook_json = nbformat.writes(notebook_sanitized, version=4)
 
@@ -1247,6 +1259,7 @@ class UnifiedChatGPTAPI(APIView):
                 chat=chat_id,
                 entity_column=entity_id_column,
                 target_column=target_column,
+                # target_column=new_target_column,  # Use the new target column
                 time_column=time_column,
                 time_frame=final_time_frame,
                 time_frequency=time_frequency,
@@ -1259,7 +1272,8 @@ class UnifiedChatGPTAPI(APIView):
             return Response({
                 "message": "Notebook generated and saved successfully.",
                 "notebook_id": notebook.id,
-                "notebook_data": notebook_json
+                "notebook_data": notebook_json,
+                "prediction_type": prediction_type
             }, status=status.HTTP_200_OK)
         else:
             notebook_non_time_based = self.create_non_time_based_notebook(
@@ -1286,7 +1300,8 @@ class UnifiedChatGPTAPI(APIView):
             return Response({
                 "message": "Notebook generated and saved successfully (non-time-based).",
                 "non_time_based_notebook_id": notebook_record.id,
-                "non_time_based_notebook": notebook_non_time_based_json
+                "non_time_based_notebook": notebook_non_time_based_json,
+                "prediction_type": prediction_type
             }, status=status.HTTP_200_OK)
 
     def create_dynamic_time_based_notebook(
@@ -1298,7 +1313,7 @@ class UnifiedChatGPTAPI(APIView):
         time_horizon: str,
         extra_features: list,
         time_frequency: str = None
-    ):
+):
         import nbformat
         import datetime
         import numpy as np
@@ -1401,7 +1416,7 @@ class UnifiedChatGPTAPI(APIView):
         query_step2 = f"""
             WITH entity_earliest_time AS (
                 SELECT
-                    {entity_id_column} AS entity_id,
+                    {entity_id_column} AS {entity_id_column},
                     MIN({time_column}) AS first_seen_time
                 FROM {table_name}
                 GROUP BY {entity_id_column}
@@ -1410,12 +1425,12 @@ class UnifiedChatGPTAPI(APIView):
                 {step1_sub}
             )
             SELECT
-                entity_earliest_time.entity_id,
+                entity_earliest_time.{entity_id_column},
                 relevant_times_in_dataset.relevant_time AS analysis_time
             FROM entity_earliest_time
             JOIN relevant_times_in_dataset
                 ON relevant_times_in_dataset.relevant_time >= entity_earliest_time.first_seen_time
-            ORDER BY analysis_time, entity_id
+            ORDER BY analysis_time, {entity_id_column}
         """.strip()
 
         step2_cell = new_code_cell(query_step2)
@@ -1445,7 +1460,7 @@ class UnifiedChatGPTAPI(APIView):
                 new_output(
                     output_type='execute_result',
                     data={'application/json': {'rows': result_json, 'columns': columns},
-                          'text/plain': text_repr},
+                        'text/plain': text_repr},
                     execution_count=1
                 )
             ]
@@ -1456,6 +1471,7 @@ class UnifiedChatGPTAPI(APIView):
 
         step2_sub = query_step2.strip().rstrip(';')
         horizon_label = time_horizon.replace(' ', '_')
+        new_target_column = f"target_within_{horizon_label}_after"  # Extract the new target column name
         query_step3 = f"""
             WITH last_time AS (
                 SELECT MAX({time_column}) AS max_ts
@@ -1465,21 +1481,21 @@ class UnifiedChatGPTAPI(APIView):
                 {step2_sub}
             )
             SELECT
-                entity_times.entity_id,
+                entity_times.{entity_id_column},
                 entity_times.analysis_time,
-                COALESCE(SUM(tbl.{target_column}), 0) AS target_within_{horizon_label}_after
+                COALESCE(SUM(tbl.{target_column}), 0) AS {new_target_column}
             FROM entity_times
             LEFT JOIN {table_name} AS tbl
-                ON tbl.{entity_id_column} = entity_times.entity_id
+                ON tbl.{entity_id_column} = entity_times.{entity_id_column}
                 AND tbl.{time_column} >= entity_times.analysis_time
                 AND tbl.{time_column} < date_add('{horizon_unit}', {horizon_number}, entity_times.analysis_time)
             WHERE entity_times.analysis_time <= date_add('{horizon_unit}', -{horizon_number}, (SELECT max_ts FROM last_time))
             GROUP BY
-                entity_times.entity_id,
+                entity_times.{entity_id_column},
                 entity_times.analysis_time
             ORDER BY
                 entity_times.analysis_time,
-                entity_times.entity_id
+                entity_times.{entity_id_column}
         """.strip()
 
         step3_cell = new_code_cell(query_step3)
@@ -1531,18 +1547,18 @@ class UnifiedChatGPTAPI(APIView):
                 {step3_sub}
             )
             SELECT
-                core_set.entity_id,
+                core_set.{entity_id_column},
                 core_set.analysis_time,
-                core_set.target_within_{horizon_label}_after
+                core_set.{new_target_column}
                 {feature_selects}
             FROM core_set
             INNER JOIN {table_name} AS tbl
-                ON tbl.{entity_id_column} = core_set.entity_id
+                ON tbl.{entity_id_column} = core_set.{entity_id_column}
                 AND tbl.{time_column} < core_set.analysis_time
                 AND tbl.{time_column} >= date_add('year', -1, core_set.analysis_time)
             ORDER BY
                 core_set.analysis_time,
-                core_set.entity_id
+                core_set.{entity_id_column}
         """.strip()
 
         step4_cell = new_code_cell(query_step4)
@@ -1572,14 +1588,14 @@ class UnifiedChatGPTAPI(APIView):
                 new_output(
                     output_type='execute_result',
                     data={'application/json': {'rows': result_json, 'columns': columns},
-                          'text/plain': text_repr},
+                        'text/plain': text_repr},
                     execution_count=1
                 )
             ]
         cells.append(step4_cell)
 
         nb['cells'] = cells
-        return nb
+        return nb, new_target_column  # Return the notebook and the new target column name
 
     def trigger_glue_update(self, table_name: str, schema: List[Dict[str, str]], file_key: str, file_size_mb: float):
         print("[DEBUG] Triggering Glue update for table:", table_name)
@@ -1930,7 +1946,9 @@ class PredictiveSettingsDetailView(APIView):
                 "time_frame": ps.time_frame if ps.time_frame else "Null",
                 "time_frequency": ps.time_frequency if ps.time_frequency else "Null",
                 "machine_learning_type": ps.machine_learning_type if ps.machine_learning_type else "Null",
-                "features": ps.features if ps.features else []
+                "features": ps.features if ps.features else [],
+                "prediction_type": ps.prediction_type if ps.prediction_type else "Null",
+                "new_target_column": ps.new_target_column if ps.new_target_column else "Null",
                 # ... other fields ...
             }
             

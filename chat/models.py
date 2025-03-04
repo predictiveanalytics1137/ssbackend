@@ -164,6 +164,8 @@ class PredictiveSettings(models.Model):
     time_frequency = models.CharField(max_length=255, null=True, blank=True)
     machine_learning_type = models.CharField(max_length=50, null=True, blank=True)
     features = models.JSONField(null=True, blank=True, default=list)  # NEW: Store feature list as JSON
+    prediction_type = models.BooleanField(default=False)
+    new_target_column = models.CharField(max_length=255, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

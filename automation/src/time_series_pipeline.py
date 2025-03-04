@@ -710,21 +710,23 @@ def train_pipeline_timeseries(
     target_column: str,
     user_id: str,
     chat_id: str,
-    column_id: str,
-    time_column: str = "date",
-    freq: str = "weekly",
+    entity_column: str,
+    time_column: str,
+    freq: str,
     forecast_horizon: str = "30 days",
-    use_time_series: bool = False
+    use_time_series: bool = False,
+    machine_learning_type: str = "regression",
+    new_target_column: str = "target_within_90_days_after"
 ):
     try:
         logger.info("Dataset received successfully.")
         logger.info(f"Dataset shape: {df.shape}")
         if df.shape[0] == 0:
             raise ValueError("DataFrame is empty.")
-        if target_column not in df.columns:
-            raise ValueError(f"Target column '{target_column}' not found.")
-        if column_id not in df.columns:
-            raise ValueError(f"ID column '{column_id}' not found.")
+        if new_target_column not in df.columns:
+            raise ValueError(f"Target column '{new_target_column}' not found.")
+        if entity_column not in df.columns:
+            raise ValueError(f"ID column '{entity_column}' not found.")
 
         training_id = chat_id
         start_time = time.time()
@@ -737,41 +739,42 @@ def train_pipeline_timeseries(
                 raise ValueError(f"Time column '{time_column}' not found.")
             df[time_column] = pd.to_datetime(df[time_column], errors="coerce")
             df = create_time_based_features(df, time_column)
-            columns_to_lag = [col for col in df.columns if col not in [time_column, column_id, target_column] and 'lag' not in col]
-            df = create_lag_features(df, column_id, columns_to_lag, time_column)
+            columns_to_lag = [col for col in df.columns if col not in [time_column, entity_column, new_target_column] and 'lag' not in col]
+            df = create_lag_features(df, entity_column, columns_to_lag, time_column)
 
         logger.info("Performing missing value imputation...")
-        df_imputed, imputers = automatic_imputation(df, target_column=target_column)
+        df_imputed, imputers = automatic_imputation(df, target_column=new_target_column)
         logger.info("Handling outliers...")
         df_outlier_fixed, outlier_bounds = detect_and_handle_outliers_train(df_imputed, factor=1.5)
         logger.info("Encoding categorical features...")
         df_encoded, encoders = handle_categorical_features(
             df=df_outlier_fixed,
-            target_column=target_column,
-            id_column=column_id,
+            target_column=new_target_column,
+            id_column=entity_column,
             cardinality_threshold=3
         )
 
         # Update columns_to_lag to include encoded features
-        encoded_columns = [col for col in df_encoded.columns if col not in [time_column, column_id, target_column] and 'lag' not in col]
-        df_encoded = create_lag_features(df_encoded, column_id, encoded_columns, time_column)
+        encoded_columns = [col for col in df_encoded.columns if col not in [time_column, entity_column, new_target_column] and 'lag' not in col]
+        df_encoded = create_lag_features(df_encoded, entity_column, encoded_columns, time_column)
 
         # 2) Single Training on Entire Dataset with sampled_date
         horizon_delta = parse_horizon(forecast_horizon)
         df_encoded[time_column] = pd.to_datetime(df_encoded[time_column])
-        sampled_dates = df_encoded.groupby(column_id)[time_column].max().reset_index()
-        sampled_dates.columns = [column_id, 'sampled_date']
-        train_data = pd.merge(df_encoded, sampled_dates, on=column_id, how='left')
+        sampled_dates = df_encoded.groupby(entity_column)[time_column].max().reset_index()
+        sampled_dates.columns = [entity_column, 'sampled_date']
+        train_data = pd.merge(df_encoded, sampled_dates, on=entity_column, how='left')
         train_data = train_data[train_data[time_column] <= train_data['sampled_date'] - horizon_delta].copy()
         logger.info(f"Training set shape: {train_data.shape}")
 
         logger.info("Performing feature engineering on training data...")
-        train_data = train_data.rename(columns={time_column: "analysis_time"})
+        # train_data = train_data.rename(columns={time_column: "analysis_time"})
         df_engineered, feature_defs = feature_engineering_timeseries(
             train_data,
-            target_column=target_column,
-            id_column=column_id,
-            time_column="analysis_time",
+            target_column=new_target_column,
+            id_column=entity_column,
+            # time_column="analysis_time",
+            time_column=time_column,
             training=True
         )
         logger.info(f"Generated features in df_engineered: {df_engineered.columns.tolist()}")
@@ -781,9 +784,9 @@ def train_pipeline_timeseries(
         logger.info("Performing feature selection...")
         df_selected, selected_features = feature_selection(
             df_engineered,
-            target_column=target_column,
+            target_column=new_target_column,
             task="regression",
-            id_column=column_id
+            id_column=entity_column
         )
         # Ensure analysis_time is preserved for model selection but not as a feature
         if 'analysis_time' in df_selected.columns:
@@ -791,14 +794,14 @@ def train_pipeline_timeseries(
             df_selected = df_selected.drop(columns=['analysis_time'])
         else:
             analysis_time = None
-        X_train = df_selected.drop(columns=[target_column, column_id], errors='ignore')
-        y_train = df_selected[target_column]
+        X_train = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
+        y_train = df_selected[new_target_column]
 
         logger.info("Selecting best model...")
         best_model_name, _, _, _, _, _ = train_test_model_selection_timeseries(
             df_selected.assign(analysis_time=analysis_time) if analysis_time is not None else df_selected,
-            target_column=target_column,
-            id_column=column_id,
+            target_column=new_target_column,
+            id_column=entity_column,
             time_column="analysis_time",
             task='regression'
         )
@@ -819,13 +822,13 @@ def train_pipeline_timeseries(
 
         # 3) Validation Predictions Per Product
         logger.info("Generating validation predictions...")
-        products = df[column_id].unique()
+        products = df[entity_column].unique()
         validation_metrics = {}
         predictions = []
 
         for product in products:
-            product_data = df_encoded[df_encoded[column_id] == product].copy()
-            sampled_date = sampled_dates[sampled_dates[column_id] == product]['sampled_date'].iloc[0]
+            product_data = df_encoded[df_encoded[entity_column] == product].copy()
+            sampled_date = sampled_dates[sampled_dates[entity_column] == product]['sampled_date'].iloc[0]
             val_data = product_data[(product_data[time_column] > sampled_date - horizon_delta) & 
                                   (product_data[time_column] <= sampled_date)].copy()
 
@@ -833,29 +836,31 @@ def train_pipeline_timeseries(
                 logger.info(f"Skipping validation for {product} due to no validation data")
                 continue
 
-            val_data = create_lag_features(val_data, column_id, encoded_columns, time_column)
+            val_data = create_lag_features(val_data, entity_column, encoded_columns, time_column)
             logger.info(f"Validation set shape for {product}: {val_data.shape}")
 
             val_engineered = feature_engineering_timeseries(
-                val_data.rename(columns={time_column: "analysis_time"}),
+                # val_data.rename(columns={time_column: "analysis_time"}),
+                val_data,
                 target_column=target_column,
-                id_column=column_id,
-                time_column="analysis_time",
+                id_column=entity_column,
+                time_column=time_column,
                 training=False,
                 feature_defs=feature_defs
             )
             val_engineered = normalize_column_names(val_engineered)
+            # import pdb; pdb.set_trace()
             X_val = val_engineered.reindex(columns=X_train.columns, fill_value=0)
             val_predictions = final_model.predict(X_val)
 
             val_df = pd.DataFrame({
                 'analysis_time': val_data[time_column],
-                column_id: product,
-                'actual': val_data[target_column],
+                entity_column: product,
+                'actual': val_data[new_target_column],
                 'predicted': val_predictions
             })
             aggregated_preds = val_df.groupby('analysis_time').agg({
-                column_id: 'first',
+                entity_column: 'first',
                 'actual': 'mean',
                 'predicted': 'mean'
             }).reset_index()

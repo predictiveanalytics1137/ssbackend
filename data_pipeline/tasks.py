@@ -11,20 +11,45 @@ from automation.scripts.train_pipeline import fetch_csv_from_s3, train_pipeline_
 from celery import shared_task
 logger = get_logger(__name__)
 
-logger.info(f"we are in tasks.py")
+# task = train_model_task.delay(file_url=file_url, target_column=target_column, user_id=user_id, chat_id=chat_id, entity_column=entity_column, prediction_type=prediction_type, time_frame = time_frame, time_frequency = time_frequency,machine_learning_type = machine_learning_type ,time_column =time_column)      # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
+
 @shared_task(bind=True)
-def train_model_task(self, file_url, target_column, user_id, chat_id, column_id, ml_type):
+def train_model_task(self, file_url, target_column, user_id, chat_id, entity_column,prediction_type , time_frame, time_frequency, machine_learning_type,time_column,new_target_column):
+    logger.info(f"we are in tasks.py")
     try:
-        logger.info(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}, file_url={file_url}, target_column={target_column}, column_id={column_id}")
-        print(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}")
+        logger.info(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, file_url={file_url}, target_column={target_column}, entity_column={entity_column}, time_column={time_column}, time_frame={time_frame}, time_frequency={time_frequency}, prediction_type={prediction_type}, machine_learning_type={machine_learning_type}")
+        print(f"Starting Celery task for user_id={user_id}, chat_id={chat_id} ")
         
-        if ml_type:
-            result = train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, column_id)
+        if prediction_type:
+            logger.info("Performing time-series training...")
+            result = train_pipeline_timeseries_api(
+                file_url=file_url, 
+                target_column=target_column, 
+                user_id=user_id, 
+                chat_id=chat_id, 
+                entity_column=entity_column, 
+                prediction_type=prediction_type,
+                time_frame=time_frame,
+                time_frequency=time_frequency,
+                machine_learning_type=machine_learning_type,
+                time_column=time_column,
+                new_target_column=new_target_column
+                
+                
+            )
             logger.info(f"Timeseries API result: {result}")
             print(f"Timeseries API result: {result}")
             model, params = result
         else:
-            result = train_pipeline_api(file_url, target_column, user_id, chat_id, column_id)
+            logger.info("Performing regular training...")
+            result = train_pipeline_api(
+                file_url=file_url, 
+                target_column=target_column, 
+                user_id=user_id, 
+                chat_id=chat_id,
+                column_id=entity_column,
+                # machine_learning_type=machine_learning_type
+            )
             logger.info(f"Regular API result: {result}")
             print(f"Regular API result: {result}")
             model, params = result

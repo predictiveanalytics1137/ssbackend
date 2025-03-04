@@ -675,6 +675,9 @@ def feature_engineering_timeseries(
             df["index"] = range(len(df))
         df = df.reset_index(drop=True)
 
+        logger.info(f"DataFrame columns: {df.columns.tolist()}")
+
+
         # Create a copy of df excluding target_column for feature generation
         feature_df = df.drop(columns=[target_column], errors='ignore') if target_column and target_column in df.columns else df.copy()
 
@@ -738,6 +741,7 @@ def feature_engineering_timeseries(
             # Reset index to ensure a standard pandas Index
             feature_matrix = feature_matrix.reset_index(drop=True)
 
+        logger.info(f"Generated features: {feature_matrix.columns.tolist()}")
         feature_matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
         numeric_cols = feature_matrix.select_dtypes(include=['float64', 'int64']).columns
         if not numeric_cols.empty:

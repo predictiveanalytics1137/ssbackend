@@ -13,6 +13,7 @@ logger = get_logger(__name__)
 
 # task = train_model_task.delay(file_url=file_url, target_column=target_column, user_id=user_id, chat_id=chat_id, entity_column=entity_column, prediction_type=prediction_type, time_frame = time_frame, time_frequency = time_frequency,machine_learning_type = machine_learning_type ,time_column =time_column)      # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
 
+# @shared_task
 @shared_task(bind=True)
 def train_model_task(self, file_url, target_column, user_id, chat_id, entity_column,prediction_type , time_frame, time_frequency, machine_learning_type,time_column,new_target_column):
     logger.info(f"we are in tasks.py")

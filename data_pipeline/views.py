@@ -782,7 +782,8 @@ class DataForAutomationAPI(APIView):
         time_frame = data.get("time_frame")  # Default to False if not provided
         time_frequency = data.get("time_frequency")  # Default to False if not provided
         machine_learning_type = data.get("machine_learning_type")  # Default to False if not provided
-        time_column = data.get("time_column")  # Default to False if not provided
+        # time_column = data.get("time_column")  # Default to False if not provided
+        time_column = "analysis_time"
         new_target_column = data.get("new_target_column")  # Default to False if not provided
         
 
@@ -799,8 +800,18 @@ class DataForAutomationAPI(APIView):
         # Trigger training asynchronously based on ml_type
         try:
             # Trigger training asynchronously based on ml_type
-            #task = train_model_task.delay(file_url, target_column, user_id, chat_id, column_id, ml_type)
-            task = train_model_task(file_url=file_url,
+            # task = train_model_task(file_url=file_url,
+            #                         target_column=target_column, 
+            #                         user_id=user_id, 
+            #                         chat_id=chat_id, 
+            #                         entity_column=entity_column, 
+            #                         prediction_type=prediction_type, 
+            #                         time_frame = time_frame, 
+            #                         time_frequency = time_frequency, 
+            #                         machine_learning_type = machine_learning_type,
+            #                         time_column = time_column,
+            #                         new_target_column = new_target_column)
+            task = train_model_task.delay(file_url=file_url,
                                     target_column=target_column, 
                                     user_id=user_id, 
                                     chat_id=chat_id, 
@@ -810,20 +821,20 @@ class DataForAutomationAPI(APIView):
                                     time_frequency = time_frequency, 
                                     machine_learning_type = machine_learning_type,
                                     time_column = time_column,
-                                    new_target_column = new_target_column)      
+                                    new_target_column = new_target_column)     
             # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
             # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
             # task = train_model_task.delay(file_url=file_url, target_column=target_column, user_id=user_id, chat_id=chat_id, entity_column=entity_column, prediction_type=prediction_type, time_frame = time_frame, time_frequency = time_frequency,machine_learning_type = machine_learning_type ,time_column =time_column)      # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
-            # logger.info(f"Training task triggered successfully | Task ID: {task.id}")
-            # return Response(
-            #     {"message": "Training started", "task_id": task.id},
-            #     status=status.HTTP_202_ACCEPTED,
-            # )
-            logger.info(f"Training task triggered successfully | Task ID: {task}")
+            logger.info(f"Training task triggered successfully | Task ID: {task.id}")
             return Response(
-                {"message": "Training completed", "result": task},
-                status=status.HTTP_200_OK,
+                {"message": "Training started", "task_id": task.id},
+                status=status.HTTP_202_ACCEPTED,
             )
+            # logger.info(f"Training task triggered successfully | Task ID: {task}")
+            # return Response(
+            #     {"message": "Training completed", "result": task},
+            #     status=status.HTTP_200_OK,
+            # )
 
         except Exception as e:
             logger.error(f"Error while triggering training: {str(e)}", exc_info=True)

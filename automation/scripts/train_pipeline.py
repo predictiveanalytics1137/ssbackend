@@ -222,6 +222,7 @@ def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, ent
         
         # Fetch data from S3
         df = fetch_csv_from_s3(file_url)
+        df = df.drop(columns=[target_column], errors="ignore")
 
 
         # Drop unwanted columns

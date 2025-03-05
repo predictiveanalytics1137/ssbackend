@@ -1225,7 +1225,7 @@ def clean_nan_values(data):
            None if pd.isna(data) or (isinstance(data, float) and np.isnan(data)) else \
            0.0 if isinstance(data, float) and np.isinf(data) else data
 
-def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df, user_id, chat_id, best_params=None):
+def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df, user_id, chat_id, best_params=None, entity_column=None):
     """
     Finalizes the time-series model by saving it, and generates metadata using validation predictions
     from the pipeline. Posts results to an API, including predictions with product_id and date.
@@ -1250,12 +1250,12 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
             logger.warning("No validation predictions provided; using training data as fallback.")
             y_val_actual = X_train[target_column] if 'target_column' in globals() else X_train.iloc[:, -1]  # Fallback logic
             y_val_pred = final_model.predict(X_train)
-            val_product_ids = X_train.index if 'product_id' in X_train else [f"prod_{i}" for i in range(X_train.shape[0])]
+            val_product_ids = X_train.index if entity_column in X_train else [f"prod_{i}" for i in range(X_train.shape[0])]
             val_dates = pd.Series([pd.Timestamp.now()] * X_train.shape[0], index=X_train.index).apply(lambda x: x.isoformat())
         else:
             y_val_actual = predictions_df['actual'].dropna()
             y_val_pred = predictions_df['predicted'].dropna()
-            val_product_ids = predictions_df['product_id'].dropna()
+            val_product_ids = predictions_df[entity_column].dropna()
             val_dates = pd.to_datetime(predictions_df['analysis_time']).dropna().apply(lambda x: x.isoformat())
 
         # Ensure aligned lengths
@@ -1362,7 +1362,7 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
 
         # Prepare predictions for the payload with product_id and analysis_time
         predictions_data = {
-            'product_id': val_product_ids.tolist(),
+            entity_column: val_product_ids.tolist(),
             'analysis_time': val_dates.tolist(),
             'actual': y_val_actual.tolist(),
             'predicted': y_val_pred.tolist()

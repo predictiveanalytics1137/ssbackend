@@ -974,16 +974,20 @@ class DataForPredictionsAPI(APIView):
     def post(self, request):
         data = request.data
         file_url = data.get("file_url")  # URL or path to the prediction dataset
-        column_id = data.get("column_id")
+        entity_column = data.get("entity_column")
         user_id = data.get("user_id")
         chat_id = data.get("chat_id")
         prediction_id = data.get("prediction_id")
-        ml_type = data.get("ml_type", False)  # Default to False if not provided
+        machine_learning_type = data.get("machine_learning_type")  # Default to False if not provided
+        new_target_column = data.get("new_target_column")  # Default to False if not provided
+        prediction_type = data.get("prediction_type")  # Default to False if not provided
+        time_column = data.get("time_column")  # Default to False if not provided
+        target_column = data.get("target_column")  # Default to False if not provided
 
-        logger.info(f"Received prediction request | user_id={user_id}, chat_id={chat_id}, ml_type={ml_type}, prediction_id={prediction_id}")
+        logger.info(f"Received prediction request | user_id={user_id}, chat_id={chat_id}, machine_learning_type={machine_learning_type}, prediction_id={prediction_id}, file_url={file_url}, entity_column={entity_column}, new_target_column={new_target_column}, prediction_type={prediction_type}, time_column={time_column}, target_column={target_column}")
 
         # Validate required parameters
-        if not file_url or not column_id or not user_id or not chat_id:
+        if not file_url or not entity_column or not user_id or not chat_id:
             return Response(
                 {"error": "Missing required fields (file_url, column_id, user_id, chat_id)"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -992,9 +996,16 @@ class DataForPredictionsAPI(APIView):
         # Trigger prediction asynchronously based on ml_type
         try:
             # task = predict_model_task.delay(file_url, column_id, user_id, chat_id, ml_type)
-            task = predict_model_task(file_url, column_id, user_id, chat_id, prediction_id, ml_type)
-
-            # logger.info(f"Prediction task triggered successfully | Task ID: {task.id}")
+            task = predict_model_task(file_url=file_url, 
+                                      entity_column=entity_column, 
+                                      user_id=user_id, 
+                                      chat_id=chat_id,
+                                      time_column=time_column,
+                                      target_column=target_column,
+                                      prediction_id=prediction_id, 
+                                      machine_learning_type=machine_learning_type, 
+                                      new_target_column=new_target_column, 
+                                      prediction_type=prediction_type)      # logger.info(f"Prediction task triggered successfully | Task ID: {task.id}")
             logger.info(f"Prediction task triggered successfully | Task ID: {task}")
             # return Response(
             #     {"message": "Prediction started", "task_id": task.id},

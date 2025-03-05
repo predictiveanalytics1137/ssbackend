@@ -1454,7 +1454,6 @@ def predict_future_timeseries(
         
         # Use historical data to populate lags
         if columns_to_lag and not historical_data.empty:
-            import pdb; pdb.set_trace()
             last_historical = historical_data.groupby(entity_column).tail(1).set_index(entity_column)
             for col in columns_to_lag:
                 input_df = pd.merge(input_df, last_historical[[col]], on=entity_column, how='left', suffixes=('', '_hist'))

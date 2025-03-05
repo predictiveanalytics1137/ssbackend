@@ -754,7 +754,6 @@ class UnifiedChatGPTAPI(APIView):
         return schema_text
 
     def generate_notebook(self, request):
-        import pdb; pdb.set_trace()
         user_id = request.data.get("user_id")
         chat_id = request.data.get("chat_id")
         print("[DEBUG] Generating notebook for user_id:", user_id, "and chat_id:", chat_id)

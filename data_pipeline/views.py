@@ -1007,7 +1007,17 @@ class DataForPredictionsAPI(APIView):
         # Trigger prediction asynchronously based on ml_type
         try:
             # task = predict_model_task.delay(file_url, column_id, user_id, chat_id, ml_type)
-            task = predict_model_task(file_url=file_url, 
+            # task = predict_model_task(file_url=file_url, 
+            #                           entity_column=entity_column, 
+            #                           user_id=user_id, 
+            #                           chat_id=chat_id,
+            #                           time_column=time_column,
+            #                           target_column=target_column,
+            #                           prediction_id=prediction_id, 
+            #                           machine_learning_type=machine_learning_type, 
+            #                           new_target_column=new_target_column, 
+            #                           prediction_type=prediction_type)      # logger.info(f"Prediction task triggered successfully | Task ID: {task.id}")
+            task = predict_model_task.delay(file_url=file_url, 
                                       entity_column=entity_column, 
                                       user_id=user_id, 
                                       chat_id=chat_id,
@@ -1018,14 +1028,14 @@ class DataForPredictionsAPI(APIView):
                                       new_target_column=new_target_column, 
                                       prediction_type=prediction_type)      # logger.info(f"Prediction task triggered successfully | Task ID: {task.id}")
             logger.info(f"Prediction task triggered successfully | Task ID: {task}")
-            # return Response(
-            #     {"message": "Prediction started", "task_id": task.id},
-            #     status=status.HTTP_202_ACCEPTED,
-            # )
             return Response(
-                {"message": "Prediction started", "task_id": task},
+                {"message": "Prediction started", "task_id": task.id},
                 status=status.HTTP_202_ACCEPTED,
             )
+            # return Response(
+            #     {"message": "Prediction started", "task_id": task},
+            #     status=status.HTTP_202_ACCEPTED,
+            # )
 
         except Exception as e:
             logger.error(f"Error while triggering prediction: {str(e)}", exc_info=True)

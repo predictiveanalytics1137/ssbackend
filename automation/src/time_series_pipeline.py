@@ -1037,7 +1037,8 @@ def train_pipeline_timeseries(
         sampled_dates = df_encoded.groupby(entity_column)[time_column].max().reset_index()
         sampled_dates.columns = [entity_column, 'sampled_date']
         train_data = pd.merge(df_encoded, sampled_dates, on=entity_column, how='left')
-        train_data = train_data[train_data[time_column] <= train_data['sampled_date'] - horizon_delta].copy()
+        #train_data = train_data[train_data[time_column] <= train_data['sampled_date'] - horizon_delta].copy()
+        train_data = train_data[train_data[time_column] <= train_data['sampled_date'].apply(lambda x: x - horizon_delta)].copy()
         logger.info(f"Training set shape: {train_data.shape}")
 
         logger.info("Performing feature engineering on training data...")

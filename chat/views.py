@@ -1727,17 +1727,19 @@ class UnifiedChatGPTAPI(APIView):
 
     def sanitize_notebook(self, nb):
         """
-        This function clears the outputs and execution counts from all code cells
-        so that only the cell sources (e.g. SQL queries) are saved.
-        It also recursively sanitizes the notebook to replace any invalid float values.
+        Clears the outputs and execution counts from all code cells,
+        recursively sanitizes the notebook (e.g., replacing NaN/infs),
+        and converts the result back into a NotebookNode.
+        This ensures that only the SQL queries (cell sources) are saved
+        and that the notebook is in the correct format for nbformat.writes.
         """
-        # First, iterate over the cells and clear outputs from code cells.
+        # First, clear outputs and execution counts from code cells.
         for cell in nb.get("cells", []):
             if cell.get("cell_type") == "code":
                 cell["outputs"] = []           # Remove query results
                 cell["execution_count"] = None # Clear execution count
 
-        # Now, recursively sanitize the notebook for invalid numbers
+        # Now, recursively sanitize the notebook to replace any invalid float values.
         def sanitize(obj):
             if isinstance(obj, dict):
                 return {k: sanitize(v) for k, v in obj.items()}
@@ -1746,13 +1748,13 @@ class UnifiedChatGPTAPI(APIView):
             elif isinstance(obj, float):
                 if np.isnan(obj) or np.isinf(obj):
                     return None
-                else:
-                    return obj
+                return obj
             else:
                 return obj
 
         sanitized_nb = sanitize(nb)
-        return sanitized_nb
+        # Convert the sanitized dictionary back into a NotebookNode
+        return nbformat.from_dict(sanitized_nb)
 
 
     def create_non_time_based_notebook(

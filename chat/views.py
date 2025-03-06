@@ -19,7 +19,7 @@ import numpy as np
 from collections import defaultdict
 
 # Add these two dictionaries at the module or class level.
-# They track whether we are awaiting a “confirm yes” response,
+# They track whether we are awaiting a â€œconfirm yesâ€ response,
 # and any pending column changes the user has not yet confirmed.
 awaiting_confirmation = defaultdict(bool)
 pending_column_updates = defaultdict(dict)
@@ -1156,7 +1156,7 @@ class UnifiedChatGPTAPI(APIView):
                 schema_text += (
                     "We detected multiple date columns. Please specify which one to use as the time column:\n"
                     f"{date_cols}\n\n"
-                    "And also specify 'Time Frame: <X>' or 'Time Frequency: <daily|weekly|monthly>' if you’d like a time-based approach.\n"
+                    "And also specify 'Time Frame: <X>' or 'Time Frequency: <daily|weekly|monthly>' if youâ€™d like a time-based approach.\n"
                 )
         else:
             schema_text += (
@@ -1726,13 +1726,23 @@ class UnifiedChatGPTAPI(APIView):
             return False
 
     def sanitize_notebook(self, nb):
+        """
+        This function clears the outputs and execution counts from all code cells
+        so that only the cell sources (e.g. SQL queries) are saved.
+        It also recursively sanitizes the notebook to replace any invalid float values.
+        """
+        # First, iterate over the cells and clear outputs from code cells.
+        for cell in nb.get("cells", []):
+            if cell.get("cell_type") == "code":
+                cell["outputs"] = []           # Remove query results
+                cell["execution_count"] = None # Clear execution count
+
+        # Now, recursively sanitize the notebook for invalid numbers
         def sanitize(obj):
             if isinstance(obj, dict):
-                for k in obj:
-                    obj[k] = sanitize(obj[k])
-                return obj
+                return {k: sanitize(v) for k, v in obj.items()}
             elif isinstance(obj, list):
-                return [sanitize(v) for v in obj]
+                return [sanitize(item) for item in obj]
             elif isinstance(obj, float):
                 if np.isnan(obj) or np.isinf(obj):
                     return None
@@ -1741,8 +1751,9 @@ class UnifiedChatGPTAPI(APIView):
             else:
                 return obj
 
-        sanitize(nb)
-        return nb
+        sanitized_nb = sanitize(nb)
+        return sanitized_nb
+
 
     def create_non_time_based_notebook(
         self,
@@ -1755,7 +1766,7 @@ class UnifiedChatGPTAPI(APIView):
         import nbformat
         from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 
-        print("[DEBUG] Creating combined non–time–based notebook...")
+        print("[DEBUG] Creating combined nonâ€“timeâ€“based notebook...")
         nb = new_notebook()
         cells = []
 

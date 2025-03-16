@@ -33,6 +33,7 @@ class PredictionMetadata(models.Model):
     duration = models.FloatField(null=True, blank=True)  # Duration in seconds
     entity_count = models.IntegerField()  # Number of entities in the dataset
     predictions_csv_path = models.CharField(max_length=1024, null=True, blank=True)  # Path to the CSV file in S3
+    predictions_data = models.JSONField(null=True, blank=True)  # New field to store predictions as JSON
 
     def __str__(self):
         return f"PredictionMetadata(chat_id={self.chat_id}, user_id={self.user_id}, status={self.status})"

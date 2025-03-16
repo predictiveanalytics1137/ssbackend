@@ -1221,14 +1221,27 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# def predict_future_timeseries(input_df, chat_id, time_column="analysis_time", column_id="product_id", target_column="target_within_30_days_after"):
+
+
+# def predict_future_timeseries(
+#     input_df, 
+#     chat_id, 
+#     prediction_id,  # New parameter from frontend
+#     user_id,        # New parameter from frontend
+#     time_column, 
+#     entity_column, 
+#     target_column,
+#     new_target_column
+# ):
 #     """
 #     Loads a trained model and artifacts from S3 and generates future predictions for the input dataset,
 #     using historical data for lags.
 
 #     Parameters:
-#     - input_df (pd.DataFrame): Input dataset with product_id, analysis_time, and features (e.g., category, is_holiday, is_promotion).
+#     - input_df (pd.DataFrame): Input dataset with product_id, analysis_time, and features.
 #     - chat_id (str): Chat identifier to load corresponding artifacts from S3.
+#     - prediction_id (str): Unique ID from frontend to track prediction status.
+#     - user_id (str): User identifier from frontend.
 #     - time_column (str): Column name for the time index (default: "analysis_time").
 #     - column_id (str): Column name for the entity ID (default: "product_id").
 #     - target_column (str): Column name for the target variable (default: "daily_demand", ignored for prediction).
@@ -1237,37 +1250,70 @@ logger = get_logger(__name__)
 #     - predictions_df (pd.DataFrame): DataFrame with predictions, including 'product_id', 'analysis_time', and 'predicted' values.
 #     """
 #     try:
-#         logger.info(f"Starting future predictions for chat_id: {chat_id}")
+#         logger.info(f"Starting future predictions for chat_id: {chat_id}, prediction_id: {prediction_id}")
         
+
+#         # Metadata API endpoint
+#         metadata_api_url = "http://127.0.0.1:8000/api/update_prediction_status/"
+
+#         # Step 1: POST initial metadata with "inprogress" status
+#         start_time = datetime.datetime.now()
+#         entity_count = input_df.shape[0]
+#         print("------------------------------------------------------------")
+#         print(f"Starting prediction process for {prediction_id}...")
+#         print(f"chat_id: {chat_id}, user_id: {user_id}, entity_count: {entity_count}, start_time: {start_time},prediction_id: {prediction_id}")
+#         response = requests.post(metadata_api_url, json={
+#             'prediction_id': prediction_id,
+#             # 'prediction_id': "1234566",  # Placeholder for now
+#             'chat_id': chat_id,
+#             # 'chat_id': "123455",  # Placeholder for now
+#             'user_id': user_id,
+#             'status': 'inprogress',
+#             'entity_count': entity_count,
+#             'start_time': start_time.isoformat()
+#         })
+#         if response.status_code != 201:
+#             logger.error(f"Failed to create metadata: {response.json()}")
+#             raise RuntimeError("Initial metadata creation failed.")
+
+#         logger.info("Starting prediction process...")
+#         start_timer = time.time()
+
 #         # S3 bucket and prefix
 #         bucket_name = "artifacts1137"
 #         prefix = f"ml-artifacts/{chat_id}/"
+        
+#         logger.info(f"Loading model and artifacts from S3 location {bucket_name}/{prefix}...")
+#         logger.info(f"{bucket_name}/{prefix}final_model.joblib")
+#         encoder_key = f"{prefix}encoder.joblib"
+#         logger.info(f"Attempting to load: {encoder_key}")
 
 #         # Load artifacts from S3
 #         logger.info("Loading model and artifacts from S3...")
 #         model = joblib.load(load_from_s3(bucket_name, f"{prefix}final_model.joblib"))
-#         encoders = joblib.load(load_from_s3(bucket_name, f"{prefix}encoder.joblib"))
+#         # model = joblib.load(load_from_s3(bucket_name,"ml-artifacts/8c30705e-5548-457e-9e0f-b74d8ac3c86d90/final_model.joblib"))
+#         encoders = joblib.load(load_from_s3(bucket_name, f"{prefix}encoders.joblib"))
 #         feature_defs = joblib.load(load_from_s3(bucket_name, f"{prefix}feature_defs.joblib"))
 #         selected_features = joblib.load(load_from_s3(bucket_name, f"{prefix}selected_features.pkl"))
 #         saved_column_names = joblib.load(load_from_s3(bucket_name, f"{prefix}saved_column_names.pkl"))
 #         historical_data = joblib.load(load_from_s3(bucket_name, f"{prefix}historical_data.joblib"))
+        
+        
 
 #         # Preprocess input dataset
 #         input_df = input_df.copy()
 #         input_df[time_column] = pd.to_datetime(input_df[time_column], errors="coerce")
 #         input_df = create_time_based_features(input_df, time_column)
+#         input_df = input_df.drop(columns=[new_target_column], errors="ignore")
 
-#         # Drop unnecessary columns (e.g., target for prediction)
-#         input_df = input_df.drop(columns=[target_column], errors="ignore")
-
-#         # Identify columns to lag (excluding time_column, column_id, target_column, and daily_demand)
-#         columns_to_lag = [col for col in input_df.columns if col not in [time_column, column_id, target_column] and 'lag' not in col]
+#         # Identify columns to lag
+#         columns_to_lag = [col for col in input_df.columns if col not in [time_column, entity_column, new_target_column] and 'lag' not in col]
         
 #         # Use historical data to populate lags
 #         if columns_to_lag and not historical_data.empty:
-#             last_historical = historical_data.groupby(column_id).tail(1).set_index(column_id)
+#             last_historical = historical_data.groupby(entity_column).tail(1).set_index(entity_column)
 #             for col in columns_to_lag:
-#                 input_df = pd.merge(input_df, last_historical[[col]], on=column_id, how='left', suffixes=('', '_hist'))
+#                 input_df = pd.merge(input_df, last_historical[[col]], on=entity_column, how='left', suffixes=('', '_hist'))
 #                 input_df[f"{col}_lag_1"] = input_df[f"{col}_hist"].fillna(0.0)
 #                 input_df[f"{col}_lag_2"] = 0.0
 #                 input_df[f"{col}_lag_3"] = 0.0
@@ -1279,27 +1325,26 @@ logger = get_logger(__name__)
 #                 input_df[f"{col}_lag_2"] = 0.0
 #                 input_df[f"{col}_lag_3"] = 0.0
 
-#         # Apply categorical encoding using saved encoders
+#         # Apply categorical encoding
 #         input_encoded, _ = handle_categorical_features(
 #             df=input_df,
 #             target_column=target_column,
-#             id_column=column_id,
+#             id_column=entity_column,
 #             encoders=encoders,
 #             training=False,
 #             cardinality_threshold=3,
-#             saved_column_names=columns_to_lag + [time_column, column_id]
+#             saved_column_names=columns_to_lag + [time_column, entity_column]
 #         )
 
-#         # Ensure time_column and column_id are preserved
 #         if time_column not in input_encoded.columns:
 #             input_encoded[time_column] = input_df[time_column]
-#         if column_id not in input_encoded.columns:
-#             input_encoded[column_id] = input_df[column_id]
+#         if entity_column not in input_encoded.columns:
+#             input_encoded[entity_column] = input_df[entity_column]
 
-#         # Recreate lags on encoded data using historical fallback
+#         # Recreate lags on encoded data
 #         if columns_to_lag and not historical_data.empty:
 #             for col in columns_to_lag:
-#                 input_encoded = pd.merge(input_encoded, last_historical[[col]], on=column_id, how='left', suffixes=('', '_hist'))
+#                 input_encoded = pd.merge(input_encoded, last_historical[[col]], on=entity_column, how='left', suffixes=('', '_hist'))
 #                 input_encoded[f"{col}_lag_1"] = input_encoded[f"{col}_hist"].fillna(0.0)
 #                 input_encoded[f"{col}_lag_2"] = 0.0
 #                 input_encoded[f"{col}_lag_3"] = 0.0
@@ -1308,10 +1353,9 @@ logger = get_logger(__name__)
 #             for col in columns_to_lag:
 #                 input_encoded[f"{col}_lag_1"] = 0.0
 #                 input_encoded[f"{col}_lag_2"] = 0.0
-#                 input_encoded[f"{col}_lag_3"] = 0.0          
-                
-                
-#         # Filter feature_defs to include only computable features
+#                 input_encoded[f"{col}_lag_3"] = 0.0
+
+#         # Feature engineering
 #         available_cols = set(input_encoded.columns)
 #         computable_defs = [
 #             f for f in feature_defs if all(
@@ -1323,11 +1367,10 @@ logger = get_logger(__name__)
 #             logger.warning("No computable Featuretools features; falling back to input data.")
 #             input_engineered = input_encoded
 #         else:
-#             # Perform feature engineering
 #             input_engineered = feature_engineering_timeseries(
 #                 input_encoded.rename(columns={time_column: "analysis_time"}),
 #                 target_column=target_column,
-#                 id_column=column_id,
+#                 id_column=entity_column,
 #                 time_column="analysis_time",
 #                 training=False,
 #                 feature_defs=computable_defs
@@ -1339,39 +1382,57 @@ logger = get_logger(__name__)
 #         logger.info("Generating future predictions...")
 #         predictions = model.predict(X_predict)
         
-#         # Create predictions DataFrame
 #         predictions_df = pd.DataFrame({
-#             column_id: input_df[column_id],
+#             entity_column: input_df[entity_column],
 #             time_column: input_df[time_column],
 #             'predicted': predictions
 #         })
-        
-#         # Aggregate predictions by mean per product_id and analysis_time
-#         predictions_df = predictions_df.groupby([column_id, time_column]).agg({'predicted': 'mean'}).reset_index()
+#         predictions_df = predictions_df.groupby([entity_column, time_column]).agg({'predicted': 'mean'}).reset_index()
 
 #         logger.info(f"Prediction shape: {predictions_df.shape}")
 #         logger.info(f"Sample predictions:\n{predictions_df.head()}")
 
-#         # Save predictions to S3 (optional)
-#         prediction_key = f"{prefix}future_predictions_{chat_id}.csv"
+#         # Save predictions to S3
+#         prediction_key = f"{prefix}future_predictions_{chat_id}_{prediction_id}.csv"
 #         with io.StringIO() as buffer:
 #             predictions_df.to_csv(buffer, index=False)
 #             buffer.seek(0)
 #             upload_to_s3(io.BytesIO(buffer.getvalue().encode()), bucket_name, prediction_key)
 #         logger.info(f"Predictions saved to s3://{bucket_name}/{prediction_key}")
 
+#         # Step 2: PATCH metadata with "success" status
+#         duration = time.time() - start_timer
+#         response = requests.patch(f"{metadata_api_url}{prediction_id}/", json={
+#             'status': 'success',
+#             'duration': duration,
+#             'predictions_csv_path': prediction_key
+#         })
+#         if response.status_code != 200:
+#             logger.error(f"Failed to update metadata: {response.json()}")
+#             raise RuntimeError("Final metadata update failed.")
+
 #         return predictions_df
 
 #     except Exception as e:
+#         # Step 3: PATCH metadata with "failed" status on error
+#         duration = time.time() - start_timer if 'start_timer' in locals() else 0
+#         response = requests.patch(f"{metadata_api_url}{prediction_id}/", json={
+#             'status': 'failed',
+#             'duration': duration,
+#             'predictions_csv_path': None
+#         })
+#         if response.status_code != 200:
+#             logger.error(f"Failed to update metadata on failure: {response.json()}")
 #         logger.error(f"Error during future predictions: {e}")
-#         raise
+#         raise  
+# 
 
 
 def predict_future_timeseries(
     input_df, 
     chat_id, 
-    prediction_id,  # New parameter from frontend
-    user_id,        # New parameter from frontend
+    prediction_id, 
+    user_id, 
     time_column, 
     entity_column, 
     target_column,
@@ -1396,7 +1457,6 @@ def predict_future_timeseries(
     try:
         logger.info(f"Starting future predictions for chat_id: {chat_id}, prediction_id: {prediction_id}")
         
-
         # Metadata API endpoint
         metadata_api_url = "http://127.0.0.1:8000/api/update_prediction_status/"
 
@@ -1405,12 +1465,12 @@ def predict_future_timeseries(
         entity_count = input_df.shape[0]
         print("------------------------------------------------------------")
         print(f"Starting prediction process for {prediction_id}...")
-        print(f"chat_id: {chat_id}, user_id: {user_id}, entity_count: {entity_count}, start_time: {start_time},prediction_id: {prediction_id}")
+        print("input_df", input_df.head())
+
+        print(f"chat_id: {chat_id}, user_id: {user_id}, entity_count: {entity_count}, start_time: {start_time}, prediction_id: {prediction_id}")
         response = requests.post(metadata_api_url, json={
             'prediction_id': prediction_id,
-            # 'prediction_id': "1234566",  # Placeholder for now
             'chat_id': chat_id,
-            # 'chat_id': "123455",  # Placeholder for now
             'user_id': user_id,
             'status': 'inprogress',
             'entity_count': entity_count,
@@ -1435,15 +1495,12 @@ def predict_future_timeseries(
         # Load artifacts from S3
         logger.info("Loading model and artifacts from S3...")
         model = joblib.load(load_from_s3(bucket_name, f"{prefix}final_model.joblib"))
-        # model = joblib.load(load_from_s3(bucket_name,"ml-artifacts/8c30705e-5548-457e-9e0f-b74d8ac3c86d90/final_model.joblib"))
         encoders = joblib.load(load_from_s3(bucket_name, f"{prefix}encoders.joblib"))
         feature_defs = joblib.load(load_from_s3(bucket_name, f"{prefix}feature_defs.joblib"))
         selected_features = joblib.load(load_from_s3(bucket_name, f"{prefix}selected_features.pkl"))
         saved_column_names = joblib.load(load_from_s3(bucket_name, f"{prefix}saved_column_names.pkl"))
         historical_data = joblib.load(load_from_s3(bucket_name, f"{prefix}historical_data.joblib"))
         
-        
-
         # Preprocess input dataset
         input_df = input_df.copy()
         input_df[time_column] = pd.to_datetime(input_df[time_column], errors="coerce")
@@ -1536,6 +1593,9 @@ def predict_future_timeseries(
         logger.info(f"Prediction shape: {predictions_df.shape}")
         logger.info(f"Sample predictions:\n{predictions_df.head()}")
 
+        # Convert time_column to string for JSON serialization
+        predictions_df[time_column] = predictions_df[time_column].astype(str)
+
         # Save predictions to S3
         prediction_key = f"{prefix}future_predictions_{chat_id}_{prediction_id}.csv"
         with io.StringIO() as buffer:
@@ -1544,12 +1604,16 @@ def predict_future_timeseries(
             upload_to_s3(io.BytesIO(buffer.getvalue().encode()), bucket_name, prediction_key)
         logger.info(f"Predictions saved to s3://{bucket_name}/{prediction_key}")
 
-        # Step 2: PATCH metadata with "success" status
+        # Convert predictions_df to JSON
+        predictions_json = predictions_df.to_dict(orient='records')
+
+        # Step 2: PATCH metadata with "success" status and predictions data
         duration = time.time() - start_timer
         response = requests.patch(f"{metadata_api_url}{prediction_id}/", json={
             'status': 'success',
             'duration': duration,
-            'predictions_csv_path': prediction_key
+            'predictions_csv_path': prediction_key,
+            'predictions_data': predictions_json  # Include predictions data
         })
         if response.status_code != 200:
             logger.error(f"Failed to update metadata: {response.json()}")
@@ -1563,12 +1627,13 @@ def predict_future_timeseries(
         response = requests.patch(f"{metadata_api_url}{prediction_id}/", json={
             'status': 'failed',
             'duration': duration,
-            'predictions_csv_path': None
+            'predictions_csv_path': None,
+            'predictions_data': None  # Include empty predictions data on failure
         })
         if response.status_code != 200:
             logger.error(f"Failed to update metadata on failure: {response.json()}")
         logger.error(f"Error during future predictions: {e}")
-        raise    
+        raise
 
 
 

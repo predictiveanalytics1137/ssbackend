@@ -113,6 +113,7 @@ def predict_model_task(self, file_url, entity_column, user_id, chat_id, predicti
         # Determine prediction function based on ml_type
         if prediction_type:
             logger.info("Performing time-series prediction...")
+            #import pdb; pdb.set_trace()
             result_df = predict_future_timeseries(df, 
                                                   chat_id, 
                                                   user_id=user_id, 

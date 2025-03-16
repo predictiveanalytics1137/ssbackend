@@ -13,6 +13,45 @@ from .models import PredictionMetadata
 
 
 
+# class UpdatePredictionStatusView(APIView):
+#     def post(self, request):
+#         """
+#         Handles creation of new prediction metadata.
+#         """
+#         try:
+#             data = request.data
+#             prediction_id = data.get("prediction_id")
+
+#             if PredictionMetadata.objects.filter(prediction_id=prediction_id).exists():
+#                 return Response({"error": "Prediction ID already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+#             PredictionMetadata.objects.create(
+#                 prediction_id=prediction_id,
+#                 chat_id=data["chat_id"],
+#                 user_id=data["user_id"],
+#                 status=data["status"],
+#                 entity_count=data["entity_count"],
+#                 start_time=data.get("start_time")
+#             )
+#             return Response({"message": "Metadata created successfully."}, status=status.HTTP_201_CREATED)
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+#     def patch(self, request, prediction_id):
+#         """
+#         Handles updates to existing prediction metadata.
+#         """
+#         try:
+#             metadata = PredictionMetadata.objects.get(prediction_id=prediction_id)
+#             for key, value in request.data.items():
+#                 setattr(metadata, key, value)
+#             metadata.save()
+#             return Response({"message": "Metadata updated successfully."}, status=status.HTTP_200_OK)
+#         except PredictionMetadata.DoesNotExist:
+#             return Response({"error": "Prediction ID not found."}, status=status.HTTP_404_NOT_FOUND)
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class UpdatePredictionStatusView(APIView):
     def post(self, request):
         """
@@ -39,20 +78,46 @@ class UpdatePredictionStatusView(APIView):
 
     def patch(self, request, prediction_id):
         """
-        Handles updates to existing prediction metadata.
+        Handles updates to prediction metadata.
         """
         try:
-            metadata = PredictionMetadata.objects.get(prediction_id=prediction_id)
-            for key, value in request.data.items():
-                setattr(metadata, key, value)
-            metadata.save()
+            prediction = PredictionMetadata.objects.get(prediction_id=prediction_id)
+            data = request.data
+
+            prediction.status = data.get("status", prediction.status)
+            prediction.duration = data.get("duration", prediction.duration)
+            prediction.predictions_csv_path = data.get("predictions_csv_path", prediction.predictions_csv_path)
+            prediction.predictions_data = data.get("predictions_data", prediction.predictions_data)
+            prediction.save()
+
             return Response({"message": "Metadata updated successfully."}, status=status.HTTP_200_OK)
         except PredictionMetadata.DoesNotExist:
             return Response({"error": "Prediction ID not found."}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-
+    def get(self, request, prediction_id):
+        """
+        Fetches prediction metadata by prediction_id.
+        """
+        try:
+            prediction = PredictionMetadata.objects.get(prediction_id=prediction_id)
+            data = {
+                'prediction_id': prediction.prediction_id,
+                'chat_id': prediction.chat_id,
+                'user_id': prediction.user_id,
+                'status': prediction.status,
+                'duration': prediction.duration,
+                'entity_count': prediction.entity_count,
+                'predictions_csv_path': prediction.predictions_csv_path,
+                'predictions_data': prediction.predictions_data,
+                'start_time': prediction.start_time.isoformat(),
+            }
+            return Response(data, status=status.HTTP_200_OK)
+        except PredictionMetadata.DoesNotExist:
+            return Response({"error": "Prediction ID not found."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 from rest_framework.views import APIView
 from rest_framework.response import Response

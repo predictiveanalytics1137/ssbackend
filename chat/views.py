@@ -834,6 +834,24 @@ class UnifiedChatGPTAPI(APIView):
                         feature_candidates = [c for c in df.columns if c not in [entity_suggestion, target_suggestion]]
 
                         # Optionally refine with GPT columns (skipped here)
+                        # Optionally, run GPT to refine suggestions.
+                        full_chat_history = ""
+                        conversation_chain = user_conversations.get(f"{user_id}_{chat_id}")
+                        if conversation_chain:
+                            for msg in conversation_chain.memory.chat_memory.messages:
+                                if msg.type == "human":
+                                    full_chat_history += f"User: {msg.content}\n"
+                                else:
+                                    full_chat_history += f"Assistant: {msg.content}\n"
+                        gpt_response = gpt_suggest_columns(df.columns.tolist(), full_chat_history)
+                        if gpt_response.get("suggested_target_column"):
+                            target_suggestion = gpt_response.get("suggested_target_column")
+                        if gpt_response.get("suggested_entity_column"):
+                            entity_suggestion = gpt_response.get("suggested_entity_column")
+                        if not target_suggestion:
+                            target_suggestion = df.columns[-1]
+                        if not entity_suggestion:
+                            entity_suggestion = df.columns[0]
 
                         file_info = {
                             'id': file_instance.id,

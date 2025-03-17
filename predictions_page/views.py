@@ -228,6 +228,7 @@ class GetPredictionMetadataView(APIView):
                     "duration": item.duration,
                     "entity_count": item.entity_count,
                     "predictions_csv_path": item.predictions_csv_path,
+                    "predictions_data": item.predictions_data,
                 }
                 for item in metadata
             ]

@@ -881,6 +881,27 @@ class UnifiedChatGPTAPI(APIView):
                             has_date_column=has_date_column,
                             date_columns=possible_date_cols,
                         )
+                        # -----------------------------
+                        # *** NEW LOGIC *** Update PredictiveSettings time_column
+                        # If we have possible_date_cols, use the first one. Otherwise, set "no_time"
+                        ps_defaults = {
+                            'target_column': None,
+                            'entity_column': None,
+                            'time_column': None,
+                            'predictive_question': None,
+                            'time_frame': None,
+                            'time_frequency': None,
+                            'machine_learning_type': 'regression',
+                        }
+                        ps, _ = PredictiveSettings.objects.get_or_create(
+                            user=user, chat_id=chat_id, defaults=ps_defaults
+                        )
+                        if possible_date_cols:
+                            ps.time_column = possible_date_cols[0]
+                        else:
+                            ps.time_column = None
+                            ps.save(update_fields=["time_column"])
+                        # -----------------------------
                     else:
                         print("[ERROR] File serializer errors:", file_serializer.errors)
                         return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)

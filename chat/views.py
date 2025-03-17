@@ -765,6 +765,7 @@ class UnifiedChatGPTAPI(APIView):
             print("[DEBUG] Final schema after standardizing date columns:", final_schema)
 
             has_date_column = any(c["data_type"] == "timestamp" for c in final_schema)
+            
             possible_date_cols = [c["column_name"] for c in final_schema if c["data_type"] == "timestamp"]
 
             # Fix boolean columns
@@ -900,7 +901,7 @@ class UnifiedChatGPTAPI(APIView):
                             ps.time_column = possible_date_cols[0]
                         else:
                             ps.time_column = None
-                            ps.save(update_fields=["time_column"])
+                        ps.save(update_fields=["time_column"])
                         # -----------------------------
                     else:
                         print("[ERROR] File serializer errors:", file_serializer.errors)

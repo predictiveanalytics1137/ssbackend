@@ -59,6 +59,8 @@ class UpdatePredictionStatusView(APIView):
         """
         try:
             data = request.data
+            print(data)
+            print("knsjdata")
             prediction_id = data.get("prediction_id")
 
             if PredictionMetadata.objects.filter(prediction_id=prediction_id).exists():
@@ -70,7 +72,8 @@ class UpdatePredictionStatusView(APIView):
                 user_id=data["user_id"],
                 status=data["status"],
                 entity_count=data["entity_count"],
-                start_time=data.get("start_time")
+                start_time=data.get("start_time"),
+                workflow=data.get("workflow")
             )
             return Response({"message": "Metadata created successfully."}, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -199,6 +202,7 @@ class GetPredictionMetadataView(APIView):
             chat_id = request.query_params.get('chat_id')
             user_id = request.query_params.get('user_id')
             prediction_id = request.query_params.get('prediction_id')
+            workflow = request.query_params.get('workflow')
 
             # Validate input: At least one parameter must be provided
             if not chat_id and not user_id and not prediction_id:
@@ -212,6 +216,8 @@ class GetPredictionMetadataView(APIView):
                 query['user_id'] = user_id
             if prediction_id:
                 query['prediction_id'] = prediction_id
+            if workflow:
+                query['workflow'] = workflow
 
             metadata = PredictionMetadata.objects.filter(**query).order_by('-start_time')
             if not metadata.exists():
@@ -229,6 +235,7 @@ class GetPredictionMetadataView(APIView):
                     "entity_count": item.entity_count,
                     "predictions_csv_path": item.predictions_csv_path,
                     "predictions_data": item.predictions_data,
+                    "workflow": item.workflow,
                 }
                 for item in metadata
             ]

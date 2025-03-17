@@ -966,6 +966,7 @@ def train_pipeline_timeseries(
             "user_id": user_id,
             "status": status,
             "entity_count": entity_count,
+            "workflow": "training",
             "duration": duration if duration is not None else None,
             "error": error if error else None,
         }
@@ -1474,7 +1475,8 @@ def predict_future_timeseries(
             'user_id': user_id,
             'status': 'inprogress',
             'entity_count': entity_count,
-            'start_time': start_time.isoformat()
+            'start_time': start_time.isoformat(),
+            "workflow": "prediction",
         })
         if response.status_code != 201:
             logger.error(f"Failed to create metadata: {response.json()}")

@@ -59,8 +59,6 @@ class UpdatePredictionStatusView(APIView):
         """
         try:
             data = request.data
-            print(data)
-            print("knsjdata")
             prediction_id = data.get("prediction_id")
 
             if PredictionMetadata.objects.filter(prediction_id=prediction_id).exists():

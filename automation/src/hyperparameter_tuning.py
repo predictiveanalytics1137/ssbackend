@@ -698,7 +698,12 @@ def hyperparameter_tuning(best_model_name, X_train, y_train, X_test=None, y_test
                 'kernel': ['rbf', 'linear'],
                 'C': [0.1, 1, 10],
                 'epsilon': [0.1, 0.2]
-            }
+            },
+            'AdaBoost': {
+            'n_estimators': [50, 100, 200],
+            'learning_rate': [0.01, 0.1, 1.0],
+            'base_estimator': [None]
+        }
         }
 
         # Define models based on the task
@@ -711,7 +716,8 @@ def hyperparameter_tuning(best_model_name, X_train, y_train, X_test=None, y_test
             'Gradient Boosting': GradientBoostingRegressor(random_state=42) if task == 'regression' else GradientBoostingClassifier(random_state=42),
             'Ridge': Ridge(random_state=42) if task == 'regression' else None,
             'KNN': KNeighborsRegressor() if task == 'regression' else KNeighborsClassifier(),
-            'SVR': SVR()
+            'SVR': SVR(),
+            'AdaBoost': AdaBoostRegressor(random_state=42) if task == 'regression' else AdaBoostClassifier(random_state=42)
         }
 
         # Ensure the model to be tuned exists

@@ -102,6 +102,7 @@ def train_pipeline(
             'chat_id': chat_id,
             'user_id': user_id,
             'status': 'inprogress',
+            "workflow": "training",
             'entity_count': entity_count,
             'start_time': start_time.isoformat()
         })
@@ -266,6 +267,7 @@ def train_pipeline(
         ##########################################
         # (11) HYPERPARAMETER TUNING
         ##########################################
+        # import pdb; pdb.set_trace()
         logger.info(f"Performing hyperparameter tuning for: {best_model_name}")
         best_model, best_params = hyperparameter_tuning(
             best_model_name=best_model_name,
@@ -350,7 +352,7 @@ def train_pipeline(
 # PREDICT NEW DATA (TIME SERIES)
 ############################################################
 
-def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None, chat_id=None, user_id=None):
+def predict_new_data(new_data, bucket_name="artifacts1137", entity_column=None, chat_id=None, user_id=None):
     """
     Loads trained model and artifacts to predict on new data.
     With data schema checks & improved handling.
@@ -363,9 +365,9 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None, chat
         if not chat_id:
             raise ValueError("chat_id is required to locate the S3 folder for artifacts.")
 
-        if id_column and id_column in new_data.columns:
-            ids = new_data[id_column].copy()
-            new_data = new_data.drop(columns=[id_column])
+        if entity_column and entity_column in new_data.columns:
+            ids = new_data[entity_column].copy()
+            new_data = new_data.drop(columns=[entity_column])
         else:
             ids = None
 
@@ -382,6 +384,7 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None, chat
             'user_id': user_id,
             'status': 'inprogress',
             'entity_count': entity_count,
+            'workflow': 'prediction',
             'start_time': start_time.isoformat()
         })
         if response.status_code != 201:
@@ -433,7 +436,7 @@ def predict_new_data(new_data, bucket_name="artifacts1137", id_column=None, chat
         # Combine with IDs
         predictions_with_ids = pd.DataFrame({"Predicted": y_pred})
         if ids is not None:
-            predictions_with_ids[id_column] = ids
+            predictions_with_ids[entity_column] = ids
 
         logger.info(f"Prediction done. Sample:\n{predictions_with_ids.head()}")
 

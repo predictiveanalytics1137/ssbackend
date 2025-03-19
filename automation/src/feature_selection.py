@@ -154,8 +154,13 @@ def feature_selection(df, target_column, task="regression", variance_threshold=0
         # 1. Variance Threshold
         logger.info("Applying VarianceThreshold to remove low-variance features...")
         numeric_X = X.select_dtypes(include=['float64', 'int64'])
-        variance_selector = VarianceThreshold(threshold=variance_threshold)
-        X_var_filtered = variance_selector.fit_transform(numeric_X)
+        if numeric_X.shape[1] == 0:
+            logger.warning("No numeric features found. Skipping VarianceThreshold.")
+            X_var_filtered = X
+            retained_cols = X.columns
+        else:
+            variance_selector = VarianceThreshold(threshold=variance_threshold)
+            X_var_filtered = variance_selector.fit_transform(numeric_X)
         # Use numeric_X.columns for the mask to match the transformed data
         retained_cols = numeric_X.columns[variance_selector.get_support()]
         X_var_filtered = pd.DataFrame(X_var_filtered, columns=retained_cols, index=X.index)

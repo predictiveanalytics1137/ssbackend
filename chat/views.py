@@ -2000,7 +2000,7 @@ class PredictiveSettingsDetailView(APIView):
                 "time_frequency": ps.time_frequency if ps.time_frequency else "Null",
                 "machine_learning_type": ps.machine_learning_type if ps.machine_learning_type else "Null",
                 "features": ps.features if ps.features else [],
-                "prediction_type": ps.prediction_type if ps.prediction_type else "Null",
+                "prediction_type": ps.prediction_type if ps.prediction_type is not None else "Null",
                 "new_target_column": ps.new_target_column if ps.new_target_column else "Null",
                 # ... other fields ...
             }

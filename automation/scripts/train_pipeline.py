@@ -178,7 +178,7 @@ def fetch_csv_from_s3(s3_path):
         raise
 
 # ✅ Function to trigger pipeline from API (Callable by Celery)
-def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id):
+def train_pipeline_api(file_url,additional_file_url, target_column, user_id, chat_id, column_id):
     """
     Trigger the training pipeline asynchronously.
     """
@@ -186,7 +186,10 @@ def train_pipeline_api(file_url, target_column, user_id, chat_id, column_id):
         logger.info(f"Starting training for user_id={user_id}, chat_id={chat_id}")
         
         # Fetch data from S3
-        df = fetch_csv_from_s3(file_url)
+        df_core = fetch_csv_from_s3(file_url)
+        df_attribute = fetch_csv_from_s3(additional_file_url)
+        # Concatenate DataFrames horizontally (column-wise)
+        df = pd.concat([df_core, df_attribute], axis=1)
 
         # # Drop unwanted columns
         # df = df.drop(columns=["entity_id", "date"], errors="ignore")

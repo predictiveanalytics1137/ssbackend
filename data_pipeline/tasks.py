@@ -15,13 +15,17 @@ logger = get_logger(__name__)
 
 # @shared_task
 @shared_task(bind=True)
-def train_model_task(self, file_url, target_column, user_id, chat_id, entity_column,prediction_type , time_frame, time_frequency, machine_learning_type,time_column,new_target_column):
+def train_model_task(self, file_url, additional_file_url, target_column, user_id, chat_id, entity_column,prediction_type , time_frame, time_frequency, machine_learning_type,time_column,new_target_column):
     logger.info(f"we are in tasks.py")
     try:
-        logger.info(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, file_url={file_url}, target_column={target_column}, entity_column={entity_column}, time_column={time_column}, time_frame={time_frame}, time_frequency={time_frequency}, prediction_type={prediction_type}, machine_learning_type={machine_learning_type}")
+        logger.info(f"Starting Celery task for user_id={user_id}, chat_id={chat_id}, file_url={file_url}, target_column={target_column}, entity_column={entity_column}, time_column={time_column}, time_frame={time_frame}, time_frequency={time_frequency}, prediction_type={prediction_type}, machine_learning_type={machine_learning_type}, additional_file_url={additional_file_url}, new_target_column={new_target_column}")
         print(f"Starting Celery task for user_id={user_id}, chat_id={chat_id} ")
+        # Convert prediction_type to a boolean
+        # Handle both string ("True"/"False") and boolean (True/False) inputs
+        prediction_type_bool = prediction_type == "True" if isinstance(prediction_type, str) else bool(prediction_type)
+        logger.info(f"Converted prediction_type to boolean: {prediction_type_bool}")
         
-        if prediction_type:
+        if prediction_type_bool:
             logger.info("Performing time-series training...")
             result = train_pipeline_timeseries_api(
                 file_url=file_url, 
@@ -44,7 +48,8 @@ def train_model_task(self, file_url, target_column, user_id, chat_id, entity_col
         else:
             logger.info("Performing regular training...")
             result = train_pipeline_api(
-                file_url=file_url, 
+                file_url=file_url,
+                additional_file_url=additional_file_url,
                 target_column=target_column, 
                 user_id=user_id, 
                 chat_id=chat_id,
@@ -68,8 +73,6 @@ def train_model_task(self, file_url, target_column, user_id, chat_id, entity_col
 
 
 from celery import shared_task
-from src.logging_config import get_logger
-from src.s3_operations import download_from_s3
 import joblib
 import pandas as pd
 
@@ -109,9 +112,11 @@ def predict_model_task(self, file_url, entity_column, user_id, chat_id, predicti
 
         # Drop unwanted columns
         # df = df.drop(columns=["entity_id", "date","target_within_30_days_after"], errors="ignore")
+        prediction_type_bool = prediction_type == "True" if isinstance(prediction_type, str) else bool(prediction_type)
+        logger.info(f"Converted prediction_type to boolean: {prediction_type_bool}")
 
         # Determine prediction function based on ml_type
-        if prediction_type:
+        if prediction_type_bool:
             logger.info("Performing time-series prediction...")
             #import pdb; pdb.set_trace()
             result_df = predict_future_timeseries(df, 
@@ -125,7 +130,7 @@ def predict_model_task(self, file_url, entity_column, user_id, chat_id, predicti
                                                   )  # Assuming predict_future_timeseries exists
         else:
             logger.info("Performing regular prediction...")
-            result_df = predict_new_data(df, chat_id, column_id=entity_column)  # Assuming predict_new_data exists
+            result_df = predict_new_data(new_data =df, chat_id=chat_id, entity_column=entity_column,user_id=user_id)  # Assuming predict_new_data exists
 
         # Prepare result
         result = {

@@ -774,6 +774,7 @@ class DataForAutomationAPI(APIView):
     def post(self, request):
         data = request.data
         file_url = data.get("file_url")
+        additional_file_url = data.get("additional_file_url")
         target_column = data.get("target_column")
         entity_column = data.get("entity_column")
         user_id = data.get("user_id")
@@ -801,6 +802,7 @@ class DataForAutomationAPI(APIView):
         try:
             # Trigger training asynchronously based on ml_type
             # task = train_model_task(file_url=file_url,
+            #                         additional_file_url=additional_file_url,
             #                         target_column=target_column, 
             #                         user_id=user_id, 
             #                         chat_id=chat_id, 
@@ -812,6 +814,7 @@ class DataForAutomationAPI(APIView):
             #                         time_column = time_column,
             #                         new_target_column = new_target_column)
             task = train_model_task.delay(file_url=file_url,
+                                    additional_file_url=additional_file_url,
                                     target_column=target_column, 
                                     user_id=user_id, 
                                     chat_id=chat_id, 

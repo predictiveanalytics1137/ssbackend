@@ -1362,7 +1362,7 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
 
         # Prepare predictions for the payload with product_id and analysis_time
         predictions_data = {
-            entity_column: val_product_ids.tolist(),
+            "entity_colum": val_product_ids.tolist(),
             'analysis_time': val_dates.tolist(),
             'actual': y_val_actual.tolist(),
             'predicted': y_val_pred.tolist()

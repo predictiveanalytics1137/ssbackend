@@ -2,6 +2,8 @@ import os
 import joblib
 import pandas as pd
 import numpy as np
+from automation.src import feature_selection
+from automation.src.data_preprocessing import handle_categorical_features
 from src.helper import normalize_column_names
 from src.logging_config import get_logger
 
@@ -639,6 +641,138 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# def feature_engineering_timeseries(
+#     df,
+#     target_column=None,
+#     id_column=None,
+#     time_column=None,
+#     training=True,
+#     feature_defs=None,
+#     dataframe_name="demand"
+# ):
+#     """
+#     Performs feature engineering using Featuretools, excluding the target_column from feature generation
+#     to prevent data leakage. Retains the target_column as a label for training.
+
+#     Parameters:
+#     - df (pd.DataFrame): Input DataFrame.
+#     - target_column (str, optional): Target column name to exclude from feature generation.
+#     - id_column (str, optional): ID column for entity relationships.
+#     - time_column (str, optional): Time column for time-series features.
+#     - training (bool): Whether in training mode (default: True).
+#     - feature_defs (list, optional): Precomputed feature definitions for prediction.
+#     - dataframe_name (str): Name of the dataframe in the EntitySet (default: "demand").
+
+#     Returns:
+#     - tuple: (feature_matrix, feature_defs) if training, feature_matrix if prediction.
+#     """
+#     try:
+#         if df.empty:
+#             raise ValueError("DataFrame is empty; cannot perform feature engineering.")
+
+#         if time_column and time_column in df.columns:
+#             df[time_column] = pd.to_datetime(df[time_column], errors="coerce")
+
+#         if "index" not in df.columns:
+#             df["index"] = range(len(df))
+#         df = df.reset_index(drop=True)
+
+#         logger.info(f"DataFrame columns: {df.columns.tolist()}")
+
+
+#         # Create a copy of df excluding target_column for feature generation
+#         feature_df = df.drop(columns=[target_column], errors='ignore') if target_column and target_column in df.columns else df.copy()
+
+#         es = ft.EntitySet(id="entity_set")
+#         es.add_dataframe(
+#             dataframe_name=dataframe_name,
+#             dataframe=feature_df,
+#             index="index",
+#             time_index=time_column if time_column in feature_df.columns else None
+#         )
+
+#         if id_column and id_column in feature_df.columns:
+#             entity_df = feature_df[[id_column]].drop_duplicates().reset_index(drop=True)
+#             es.add_dataframe(
+#                 dataframe_name="entities",
+#                 dataframe=entity_df,
+#                 index=id_column
+#             )
+#             es.add_relationship("entities", id_column, dataframe_name, id_column)
+
+#         agg_primitives = ["mean", "sum", "count"]
+#         trans_primitives = ["month"] if time_column else []
+
+#         if training:
+#             cutoff_times = feature_df[["index", time_column]].rename(columns={time_column: "time"}) if time_column in feature_df.columns else None
+#             feature_matrix, new_feature_defs = ft.dfs(
+#                 entityset=es,
+#                 target_dataframe_name=dataframe_name,
+#                 cutoff_time=cutoff_times,
+#                 agg_primitives=agg_primitives,
+#                 trans_primitives=trans_primitives,
+#                 max_depth=2,
+#                 verbose=False
+#             )
+#             # Reattach target_column as a label
+#             if target_column and target_column in df.columns:
+#                 feature_matrix[target_column] = df[target_column].iloc[:len(feature_matrix)].reset_index(drop=True)
+#             # Reattach time_column if it exists
+#             if time_column and time_column in df.columns:
+#                 feature_matrix[time_column] = df[time_column].iloc[:len(feature_matrix)].reset_index(drop=True)
+#             logger.info(f"Generated feature_defs: {[f.get_name() for f in new_feature_defs]}")
+#         else:
+#             if feature_defs is None:
+#                 raise RuntimeError("Feature definitions must be provided for prediction.")
+#             available_cols = set(feature_df.columns)
+#             computable_defs = [
+#                 f for f in feature_defs if all(
+#                     isinstance(dep, str) and dep in available_cols
+#                     for dep in f.get_dependencies(deep=True) or []
+#                 )
+#             ]
+#             if not computable_defs:
+#                 logger.warning("No computable Featuretools features; falling back to input data.")
+#                 return df
+#             feature_matrix = ft.calculate_feature_matrix(
+#                 features=computable_defs,
+#                 entityset=es,
+#                 verbose=False
+#             )
+#             new_feature_defs = feature_defs
+#             # Reset index to ensure a standard pandas Index
+#             feature_matrix = feature_matrix.reset_index(drop=True)
+
+#         logger.info(f"Generated features: {feature_matrix.columns.tolist()}")
+#         feature_matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
+#         numeric_cols = feature_matrix.select_dtypes(include=['float64', 'int64']).columns
+#         if not numeric_cols.empty:
+#             feature_matrix[numeric_cols] = feature_matrix[numeric_cols].fillna(0)
+#         if id_column and id_column in df.columns:
+#             feature_matrix[id_column] = df[id_column].iloc[:len(feature_matrix)].reset_index(drop=True)
+#         if time_column and time_column in df.columns:
+#             feature_matrix[time_column] = df[time_column].iloc[:len(feature_matrix)].reset_index(drop=True)
+
+#         logger.info(f"Generated features: {feature_matrix.columns.tolist()}")
+#         return (feature_matrix, new_feature_defs) if training else feature_matrix
+
+#     except Exception as e:
+#         logger.error(f"Error in feature_engineering: {e}")
+#         raise
+
+
+
+
+# V4
+
+import featuretools as ft
+import pandas as pd
+import numpy as np
+import logging
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 def feature_engineering_timeseries(
     df,
     target_column=None,
@@ -646,114 +780,160 @@ def feature_engineering_timeseries(
     time_column=None,
     training=True,
     feature_defs=None,
-    dataframe_name="demand"
+    dataframe_name="demand",
+    # agg_primitives=["mean", "std", "sum", "count", "min", "max"],
+    agg_primitives=["mean"],
+    # trans_primitives=["month", "weekday", "week", "lag", "rolling_mean", "rolling_std"],
+    trans_primitives=["month"],
+    max_depth=2,
+    chunk_size=None
 ):
     """
-    Performs feature engineering using Featuretools, excluding the target_column from feature generation
-    to prevent data leakage. Retains the target_column as a label for training.
+    Optimized feature engineering for time-series using Featuretools, with integrated time-based feature
+    extraction (month, day_of_week, week_of_year). Generates features efficiently while preventing data
+    leakage and integrating custom preprocessing and selection.
 
     Parameters:
     - df (pd.DataFrame): Input DataFrame.
-    - target_column (str, optional): Target column name to exclude from feature generation.
+    - target_column (str, optional): Target column to exclude from feature generation.
     - id_column (str, optional): ID column for entity relationships.
     - time_column (str, optional): Time column for time-series features.
-    - training (bool): Whether in training mode (default: True).
+    - training (bool): Training mode (True) or prediction mode (False).
     - feature_defs (list, optional): Precomputed feature definitions for prediction.
-    - dataframe_name (str): Name of the dataframe in the EntitySet (default: "demand").
+    - dataframe_name (str): Name of the EntitySet dataframe (default: "demand").
+    - agg_primitives (list): Aggregation primitives for feature generation.
+    - trans_primitives (list): Transformation primitives for feature generation.
+    - max_depth (int): Maximum depth of feature synthesis (default: 2).
+    - chunk_size (int, optional): Size of chunks for large datasets to manage memory.
 
     Returns:
     - tuple: (feature_matrix, feature_defs) if training, feature_matrix if prediction.
     """
     try:
         if df.empty:
-            raise ValueError("DataFrame is empty; cannot perform feature engineering.")
+            raise ValueError("Input DataFrame is empty.")
 
+        # Convert time_column to datetime efficiently
         if time_column and time_column in df.columns:
-            df[time_column] = pd.to_datetime(df[time_column], errors="coerce")
+            df[time_column] = pd.to_datetime(df[time_column], errors="coerce", infer_datetime_format=True)
+        else:
+            logger.warning("Time column not provided or not found; time-based features will be limited.")
 
+        # Add index if missing
         if "index" not in df.columns:
-            df["index"] = range(len(df))
-        df = df.reset_index(drop=True)
+            df["index"] = np.arange(len(df))
 
-        logger.info(f"DataFrame columns: {df.columns.tolist()}")
+        logger.info(f"Input DataFrame shape: {df.shape}, columns: {df.columns.tolist()}")
 
+        # Integrate time-based features manually (from create_time_based_features)
+        if time_column and time_column in df.columns:
+            df["month"] = df[time_column].dt.month
+            df["day_of_week"] = df[time_column].dt.dayofweek
+            df["week_of_year"] = df[time_column].dt.isocalendar().week.astype(int)
+            logger.info("Added manual time-based features: month, day_of_week, week_of_year")
 
-        # Create a copy of df excluding target_column for feature generation
-        feature_df = df.drop(columns=[target_column], errors='ignore') if target_column and target_column in df.columns else df.copy()
+        # Apply custom categorical preprocessing (assumed function)
+        # df = handle_categorical_features(df)
 
+        # Isolate target to prevent leakage
+        feature_df = (
+            df.drop(columns=[target_column], errors="ignore")
+            if target_column and target_column in df.columns
+            else df.copy()
+        )
+
+        # Initialize EntitySet
         es = ft.EntitySet(id="entity_set")
         es.add_dataframe(
             dataframe_name=dataframe_name,
             dataframe=feature_df,
             index="index",
-            time_index=time_column if time_column in feature_df.columns else None
+            time_index=time_column if time_column in feature_df.columns else None,
+            logical_types={col: "Categorical" for col in feature_df.select_dtypes(include=["object"]).columns}
         )
 
+        # Add entity relationship if id_column exists
         if id_column and id_column in feature_df.columns:
-            entity_df = feature_df[[id_column]].drop_duplicates().reset_index(drop=True)
-            es.add_dataframe(
-                dataframe_name="entities",
-                dataframe=entity_df,
-                index=id_column
-            )
+            entity_df = feature_df[[id_column]].drop_duplicates()
+            es.add_dataframe(dataframe_name="entities", dataframe=entity_df, index=id_column)
             es.add_relationship("entities", id_column, dataframe_name, id_column)
 
-        agg_primitives = ["mean", "sum", "count"]
-        trans_primitives = ["month"] if time_column else []
-
+        # Feature generation
         if training:
-            cutoff_times = feature_df[["index", time_column]].rename(columns={time_column: "time"}) if time_column in feature_df.columns else None
+            cutoff_times = (
+                feature_df[["index", time_column]].rename(columns={time_column: "time"})
+                if time_column in feature_df.columns
+                else None
+            )
             feature_matrix, new_feature_defs = ft.dfs(
                 entityset=es,
                 target_dataframe_name=dataframe_name,
                 cutoff_time=cutoff_times,
                 agg_primitives=agg_primitives,
                 trans_primitives=trans_primitives,
-                max_depth=2,
-                verbose=False
+                max_depth=max_depth,
+                verbose=False,
+                chunk_size=chunk_size
             )
-            # Reattach target_column as a label
-            if target_column and target_column in df.columns:
-                feature_matrix[target_column] = df[target_column].iloc[:len(feature_matrix)].reset_index(drop=True)
-            # Reattach time_column if it exists
-            if time_column and time_column in df.columns:
-                feature_matrix[time_column] = df[time_column].iloc[:len(feature_matrix)].reset_index(drop=True)
-            logger.info(f"Generated feature_defs: {[f.get_name() for f in new_feature_defs]}")
         else:
-            if feature_defs is None:
-                raise RuntimeError("Feature definitions must be provided for prediction.")
+            if not feature_defs:
+                raise ValueError("Feature definitions required for prediction mode.")
+            # Filter computable features
             available_cols = set(feature_df.columns)
             computable_defs = [
-                f for f in feature_defs if all(
-                    isinstance(dep, str) and dep in available_cols
-                    for dep in f.get_dependencies(deep=True) or []
-                )
+                f for f in feature_defs
+                if all(dep in available_cols for dep in f.get_dependencies(deep=True) if isinstance(dep, str))
             ]
             if not computable_defs:
-                logger.warning("No computable Featuretools features; falling back to input data.")
+                logger.warning("No computable features; returning preprocessed input.")
                 return df
             feature_matrix = ft.calculate_feature_matrix(
                 features=computable_defs,
                 entityset=es,
-                verbose=False
+                verbose=False,
+                chunk_size=chunk_size
             )
             new_feature_defs = feature_defs
-            # Reset index to ensure a standard pandas Index
-            feature_matrix = feature_matrix.reset_index(drop=True)
 
-        logger.info(f"Generated features: {feature_matrix.columns.tolist()}")
-        feature_matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
-        numeric_cols = feature_matrix.select_dtypes(include=['float64', 'int64']).columns
-        if not numeric_cols.empty:
-            feature_matrix[numeric_cols] = feature_matrix[numeric_cols].fillna(0)
-        if id_column and id_column in df.columns:
-            feature_matrix[id_column] = df[id_column].iloc[:len(feature_matrix)].reset_index(drop=True)
+        # Reattach target_column (if present) in both training and prediction modes
+        if target_column and target_column in df.columns:
+            feature_matrix[target_column] = df[target_column].iloc[:len(feature_matrix)].values
+            logger.info(f"Reattached target column '{target_column}' to feature matrix.")
+
         if time_column and time_column in df.columns:
-            feature_matrix[time_column] = df[time_column].iloc[:len(feature_matrix)].reset_index(drop=True)
+            feature_matrix[time_column] = df[time_column].iloc[:len(feature_matrix)].values
 
-        logger.info(f"Generated features: {feature_matrix.columns.tolist()}")
+        # Ensure time-based features from Featuretools are numeric
+        for col in feature_matrix.columns:
+            if col.startswith(("MONTH", "WEEKDAY", "WEEK")) and feature_matrix[col].dtype.name == "category":
+                feature_matrix[col] = feature_matrix[col].astype(int)
+                logger.info(f"Converted '{col}' from category to int.")
+
+        # Reset index for consistency
+        feature_matrix = feature_matrix.reset_index(drop=True)
+
+        # Clean up infinite values and handle NaNs
+        feature_matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
+        numeric_cols = feature_matrix.select_dtypes(include=["float64", "int64"]).columns
+        if not numeric_cols.empty:
+            feature_matrix[numeric_cols] = (
+                feature_matrix[numeric_cols]
+                .fillna(method="ffill")
+                .fillna(method="bfill")
+                .fillna(0)
+            )
+
+        # Apply custom feature selection (assumed function)
+        # feature_matrix = feature_selection(feature_matrix)
+
+        logger.info(f"Final feature matrix shape: {feature_matrix.shape}, columns: {feature_matrix.columns.tolist()}")
+
         return (feature_matrix, new_feature_defs) if training else feature_matrix
 
     except Exception as e:
-        logger.error(f"Error in feature_engineering: {e}")
+        logger.error(f"Feature engineering failed: {str(e)}", exc_info=True)
         raise
+
+# Example usage (commented out):
+# df = pd.DataFrame({...})
+# feature_matrix, feature_defs = feature_engineering_timeseries(df, target_column="sales", time_column="date", id_column="store_id")

@@ -192,7 +192,7 @@ def train_pipeline_api(file_url,additional_file_url, target_column, user_id, cha
         df = pd.concat([df_core, df_attribute], axis=1)
 
         # # Drop unwanted columns
-        # df = df.drop(columns=["entity_id", "date"], errors="ignore")
+        # df = df.drop(columns=["date"], errors="ignore")
 
         
         # Run the training pipeline
@@ -229,7 +229,7 @@ def train_pipeline_timeseries_api(file_url, target_column, user_id, chat_id, ent
 
 
         # Drop unwanted columns
-        # df = df.drop(columns=["entity_id", "date"], errors="ignore")
+        df = df.drop(columns=["date"], errors="ignore")
         
         # Run the time-series training pipeline
         best_model, best_params = train_pipeline_timeseries(

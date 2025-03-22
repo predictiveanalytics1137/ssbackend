@@ -25,6 +25,7 @@ def train_model_task(self, file_url, additional_file_url, target_column, user_id
         prediction_type_bool = prediction_type == "True" if isinstance(prediction_type, str) else bool(prediction_type)
         logger.info(f"Converted prediction_type to boolean: {prediction_type_bool}")
         
+        
         if prediction_type_bool:
             logger.info("Performing time-series training...")
             result = train_pipeline_timeseries_api(

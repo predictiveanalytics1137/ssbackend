@@ -671,13 +671,6 @@ def generate_forecast_dates(start_date, horizon_delta, frequency):
         current += increment
     return dates
 
-def create_time_based_features(df, time_column):
-    df = df.copy()
-    df[time_column] = pd.to_datetime(df[time_column])
-    df["month"] = df[time_column].dt.month
-    df["day_of_week"] = df[time_column].dt.dayofweek
-    df["week_of_year"] = df[time_column].dt.isocalendar().week.astype(int)
-    return df
 
 def create_lag_features(df, group_column, columns_to_lag, time_column, lags=3):
     df = df.copy()
@@ -1007,16 +1000,25 @@ def train_pipeline_timeseries(
             raise ValueError(f"ID column '{entity_column}' not found.")
 
         # 1) Preprocess Entire Dataset
+        
+        # 1) Preprocess Entire Dataset
+        duration = time.time() - start_time
         if use_time_series and time_column:
             logger.info("Performing time-series preprocessing...")
             if time_column not in df.columns:
                 raise ValueError(f"Time column '{time_column}' not found.")
             df[time_column] = pd.to_datetime(df[time_column], errors="coerce")
-            df = create_time_based_features(df, time_column)
-            columns_to_lag = [col for col in df.columns if col not in [time_column, entity_column, new_target_column] and 'lag' not in col]
-            df = create_lag_features(df, entity_column, columns_to_lag, time_column)
+            # Create lag features on raw numeric columns
+            columns_to_lag = [
+                col for col in df.columns 
+                if col not in [time_column, entity_column, new_target_column] and 'lag' not in col
+                and df[col].dtype in ['int64', 'float64']  # Only numeric columns
+            ]
+            df = create_lag_features(df, entity_column, columns_to_lag, time_column, lags=3)
 
         logger.info("Performing missing value imputation...")
+        
+        
         df_imputed, imputers = automatic_imputation(df, target_column=new_target_column)
         logger.info("Handling outliers...")
         df_outlier_fixed, outlier_bounds = detect_and_handle_outliers_train(df_imputed, factor=1.5)
@@ -1028,21 +1030,33 @@ def train_pipeline_timeseries(
             cardinality_threshold=3
         )
 
-        # Update columns_to_lag to include encoded features
-        encoded_columns = [col for col in df_encoded.columns if col not in [time_column, entity_column, new_target_column] and 'lag' not in col]
-        df_encoded = create_lag_features(df_encoded, entity_column, encoded_columns, time_column)
 
-        # 2) Single Training on Entire Dataset with sampled_date
-        horizon_delta = parse_horizon(forecast_horizon)
+
+        # 2) Separate Training and Validation Data with 30-Day Validation Period
+        logger.info("Splitting data into training and validation sets...")
         df_encoded[time_column] = pd.to_datetime(df_encoded[time_column])
         sampled_dates = df_encoded.groupby(entity_column)[time_column].max().reset_index()
-        sampled_dates.columns = [entity_column, 'sampled_date']
-        train_data = pd.merge(df_encoded, sampled_dates, on=entity_column, how='left')
-        #train_data = train_data[train_data[time_column] <= train_data['sampled_date'] - horizon_delta].copy()
-        train_data = train_data[train_data[time_column] <= train_data['sampled_date'].apply(lambda x: x - horizon_delta)].copy()
+        sampled_dates.columns = [entity_column, 'latest_date']
+        df_with_dates = pd.merge(df_encoded, sampled_dates, on=entity_column, how='left')
+        validation_days = 30
+        validation_cutoff = df_with_dates['latest_date'].apply(lambda x: x - pd.Timedelta(days=validation_days))
+        train_data = df_with_dates[df_with_dates[time_column] <= validation_cutoff].copy()
+        validation_data = df_with_dates[df_with_dates[time_column] > validation_cutoff].copy()
         logger.info(f"Training set shape: {train_data.shape}")
+        logger.info(f"Validation set shape: {validation_data.shape}")
+
+
+        # Drop latest_date before feature engineering
+        train_data = train_data.drop(columns=['latest_date'], errors='ignore')
+        validation_data = validation_data.drop(columns=['latest_date'], errors='ignore')
+
+
+
 
         logger.info("Performing feature engineering on training data...")
+        current_status = "feature_engineering_started"
+        update_status(current_status)
+        
         df_engineered, feature_defs = feature_engineering_timeseries(
             train_data,
             target_column=new_target_column,
@@ -1052,25 +1066,47 @@ def train_pipeline_timeseries(
         )
         current_status = "feature_engineering_completed"
         update_status(current_status)
+        
 
         logger.info(f"Generated features in df_engineered: {df_engineered.columns.tolist()}")
         df_engineered = normalize_column_names(df_engineered)
-        df_engineered = df_engineered.drop(columns=['date'], errors='ignore')
+        
 
         logger.info("Performing feature selection...")
+        
+        exclude_cols = [col for col in df_engineered.columns if df_engineered[col].nunique() == len(df_engineered)]
         df_selected, selected_features = feature_selection(
             df_engineered,
             target_column=new_target_column,
+            time_column=time_column,
             task="regression",
-            id_column=entity_column
+            id_column=entity_column,
+            exclude_columns=exclude_cols,
+            max_features=15
         )
         if 'analysis_time' in df_selected.columns:
             analysis_time = df_selected['analysis_time'].copy()
             df_selected = df_selected.drop(columns=['analysis_time'])
         else:
             analysis_time = None
-        X_train = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
+
+        # 5) Scale Features After Selection
+        logger.info("Scaling selected features...")
+        scaler = StandardScaler()
+        X_train_unscaled = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
         y_train = df_selected[new_target_column]
+        X_train_numeric = X_train_unscaled.select_dtypes(include=["float64", "int64"])
+        X_train_non_numeric = X_train_unscaled.select_dtypes(exclude=["float64", "int64"])
+        X_train_scaled_numeric = pd.DataFrame(
+            scaler.fit_transform(X_train_numeric),
+            columns=X_train_numeric.columns,
+            index=X_train_numeric.index
+        )
+        X_train = pd.concat([X_train_scaled_numeric, X_train_non_numeric], axis=1)
+
+
+        # X_train = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
+        # y_train = df_selected[new_target_column]
 
         logger.info("Selecting best model...")
         best_model_name, _, _, _, _, _ = train_test_model_selection_timeseries(
@@ -1093,72 +1129,110 @@ def train_pipeline_timeseries(
         update_status(current_status)
 
         logger.info("Training final model with best hyperparameters...")
+        
         final_model = best_model.__class__(**best_params)
         final_model.fit(X_train, y_train)
 
         logger.info("Generating validation predictions...")
-        current_status = "validation_predictions_inprogress"
+        # 7) Process Validation Data Through Same Steps
+        logger.info("Processing validation data for predictions...")
+
+        # Feature Engineering on Validation Data
+        logger.info("Performing feature engineering on validation data...")
+        val_engineered = feature_engineering_timeseries(
+            validation_data,
+            target_column=new_target_column,
+            id_column=entity_column,
+            time_column=time_column,
+            training=False,
+            feature_defs=feature_defs
+        )
+        logger.info(f"Generated features in val_engineered: {val_engineered.columns.tolist()}")
+        val_engineered = normalize_column_names(val_engineered)
+
+        # Apply Feature Selection to Validation Data
+        # Since feature selection was done on training, we just keep the selected features
+        # val_selected = val_engineered[[col for col in df_selected.columns if col in val_engineered.columns]]
+        # X_val = val_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
+        # y_val = val_selected[new_target_column]
+
+
+        # Select the same features as training
+        val_selected = val_engineered[[col for col in df_selected.columns if col in val_engineered.columns]]
+        X_val_unscaled = val_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
+        y_val = val_selected[new_target_column]
+
+        # Scale validation data using the same scaler
+        X_val_numeric = X_val_unscaled.select_dtypes(include=["float64", "int64"])
+        X_val_non_numeric = X_val_unscaled.select_dtypes(exclude=["float64", "int64"])
+        X_val_scaled_numeric = pd.DataFrame(
+            scaler.transform(X_val_numeric),  # Use transform, not fit_transform
+            columns=X_val_numeric.columns,
+            index=X_val_numeric.index
+        )
+        X_val = pd.concat([X_val_scaled_numeric, X_val_non_numeric], axis=1)
+
+        # Ensure X_val matches X_train columns
+        
+        missing_cols = set(X_train.columns) - set(X_val.columns)
+        if missing_cols:
+            logger.warning(f"Missing columns in X_val: {missing_cols}")
+            for col in missing_cols:
+                X_val[col] = 0  # Fill missing columns with 0
+        extra_cols = set(X_val.columns) - set(X_train.columns)
+        if extra_cols:
+            logger.info(f"Dropping extra columns in X_val: {extra_cols}")
+            X_val = X_val.drop(columns=extra_cols)
+        X_val = X_val[X_train.columns]  # Reorder to match X_train
+
+        # 8) Predict on Validation Data
+        logger.info("Generating predictions on validation data...")
+        val_predictions = final_model.predict(X_val)
+
+        # Create validation results DataFrame
+        val_results = pd.DataFrame({
+            time_column: validation_data[time_column].reset_index(drop=True),
+            entity_column: validation_data[entity_column].reset_index(drop=True),
+            'actual': y_val.reset_index(drop=True),
+            'predicted': val_predictions
+        })
+        # logger.info(f"Validation actuals vs predictions:\n{val_results[['actual', 'predicted']].head(10)}")
+        # actuals = val_results['actual'].tolist()
+        # predictions = val_results['predicted'].tolist()
+        # logger.info(f"Actuals sample: {actuals[:10]}")
+        # logger.info(f"Predictions sample: {predictions[:10]}")
+        # logger.info(f"Validation results sample:\n{val_results.head()}")
+        
+
+        # Aggregate by analysis_time and store_id
+        val_results_agg = val_results.groupby([time_column, entity_column]).agg({
+            'actual': 'mean',
+            'predicted': 'mean'
+        }).reset_index()
+        logger.info(f"Aggregated validation results:\n{val_results_agg.head()}")
+
+        # Calculate validation metrics
+        mse = mean_squared_error(val_results['actual'], val_results['predicted'])
+        mae = mean_absolute_error(val_results['actual'], val_results['predicted'])
+        r2 = r2_score(val_results['actual'], val_results['predicted']) if len(val_results) > 1 else 0.0
+        logger.info(f"Validation MSE: {mse:.2f}, MAE: {mae:.2f}, R2: {r2:.2f}")
+
+        # Optionally, update status
+        current_status = "validation_predictions_completed"
         update_status(current_status)
-        products = df[entity_column].unique()
-        validation_metrics = {}
-        predictions = []
 
-        for product in products:
-            product_data = df_encoded[df_encoded[entity_column] == product].copy()
-            sampled_date = sampled_dates[sampled_dates[entity_column] == product]['sampled_date'].iloc[0]
-            val_data = product_data[(product_data[time_column] > sampled_date - horizon_delta) & 
-                                  (product_data[time_column] <= sampled_date)].copy()
+        
+        logger.info(f"Pipeline completed. Total duration: {duration:.2f} seconds")
+        logger.info("Generating validation predictions...")
+        current_status = "validation_predictions_inprogress"
 
-            if len(val_data) == 0:
-                logger.info(f"Skipping validation for {product} due to no validation data")
-                continue
-
-            val_data = create_lag_features(val_data, entity_column, encoded_columns, time_column)
-            logger.info(f"Validation set shape for {product}: {val_data.shape}")
-
-            val_engineered = feature_engineering_timeseries(
-                val_data,
-                target_column=target_column,
-                id_column=entity_column,
-                time_column=time_column,
-                training=False,
-                feature_defs=feature_defs
-            )
-            current_status = "validation_feature_engineering_completed"
-            update_status(current_status)
-            val_engineered = normalize_column_names(val_engineered)
-            X_val = val_engineered.reindex(columns=X_train.columns, fill_value=0)
-            val_predictions = final_model.predict(X_val)
-
-            val_df = pd.DataFrame({
-                'analysis_time': val_data[time_column],
-                entity_column: product,
-                'actual': val_data[new_target_column],
-                'predicted': val_predictions
-            })
-            aggregated_preds = val_df.groupby('analysis_time').agg({
-                entity_column: 'first',
-                'actual': 'mean',
-                'predicted': 'mean'
-            }).reset_index()
-            predictions.append(aggregated_preds)
-            logger.info(f"Validation predictions shape for {product}: {aggregated_preds.shape}")
-            
-            mse = mean_squared_error(aggregated_preds['actual'], aggregated_preds['predicted'])
-            mae = mean_absolute_error(aggregated_preds['actual'], aggregated_preds['predicted'])
-            r2 = r2_score(aggregated_preds['actual'], aggregated_preds['predicted']) if len(aggregated_preds['actual']) > 1 else 0.0
-            validation_metrics[product] = {'RMSE': mse, 'MAE': mae, 'R2': r2}
-            logger.info(f"Product {product} - Validation MSE: {mse:.2f}")
-
-        predictions_df = pd.concat(predictions, ignore_index=True)
-        logger.info("Validation predictions shape: " + str(predictions_df.shape))
-        logger.info("Validation predictions sample:\n" + str(predictions_df.head()))
-
+        
         logger.info("Finalizing and evaluating the model with validation predictions...")
+        import pdb; pdb.set_trace()
         final_model, final_metrics = finalize_and_evaluate_model_timeseries(
             final_model=final_model,
             X_train=X_train,
-            predictions_df=predictions_df,
+            predictions_df=val_results_agg,  # Pass raw predictions
             user_id=user_id,
             chat_id=chat_id,
             best_params=best_params,

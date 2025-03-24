@@ -784,7 +784,7 @@ def feature_engineering_timeseries(
     # agg_primitives=["mean", "std", "sum", "count", "min", "max"],
     agg_primitives=["mean"],
     # trans_primitives=["month", "weekday", "week", "lag", "rolling_mean", "rolling_std"],
-    trans_primitives=["month"],
+    trans_primitives=["month","rolling_mean"],
     max_depth=2,
     chunk_size=None
 ):

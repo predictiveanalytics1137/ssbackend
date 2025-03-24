@@ -1017,8 +1017,7 @@ def train_pipeline_timeseries(
             df = create_lag_features(df, entity_column, columns_to_lag, time_column, lags=3)
 
         logger.info("Performing missing value imputation...")
-        
-        
+
         df_imputed, imputers = automatic_imputation(df, target_column=new_target_column)
         logger.info("Handling outliers...")
         df_outlier_fixed, outlier_bounds = detect_and_handle_outliers_train(df_imputed, factor=1.5)
@@ -1082,7 +1081,8 @@ def train_pipeline_timeseries(
             task="regression",
             id_column=entity_column,
             exclude_columns=exclude_cols,
-            max_features=15
+            # max_features=15
+            max_features=50
         )
         if 'analysis_time' in df_selected.columns:
             analysis_time = df_selected['analysis_time'].copy()

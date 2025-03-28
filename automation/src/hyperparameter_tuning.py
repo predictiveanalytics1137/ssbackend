@@ -774,3 +774,163 @@ def hyperparameter_tuning(best_model_name, X_train, y_train, X_test=None, y_test
     except Exception as e:
         logger.error(f"Error during hyperparameter tuning: {e}")
         raise
+
+
+
+
+
+
+
+
+
+
+
+# for timeseries data
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, TimeSeriesSplit
+from sklearn.metrics import mean_squared_error, f1_score
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from xgboost import XGBRegressor, XGBClassifier
+from lightgbm import LGBMRegressor, LGBMClassifier
+from catboost import CatBoostRegressor, CatBoostClassifier
+import logging
+import time
+
+logger = logging.getLogger(__name__)
+
+def hyperparameter_tuning_timeseries(best_model_name, X_train, y_train, task='regression', full_train=False):
+    """
+    Performs hyperparameter tuning for time-series forecasting using cross-validation.
+    If full_train is True, performs an exhaustive grid search; otherwise, uses a randomized search for efficiency.
+
+    Parameters:
+    - best_model_name (str): Name of the model to tune (e.g., 'XGBoost', 'Random Forest').
+    - X_train (pd.DataFrame): Training features.
+    - y_train (pd.Series): Training target.
+    - task (str): 'regression' or 'classification' (default: 'regression').
+    - full_train (bool): If True, uses GridSearchCV; if False, uses RandomizedSearchCV (default: False).
+
+    Returns:
+    - best_model: Tuned model with the best parameters.
+    - best_params (dict): Best hyperparameters found.
+    """
+    try:
+        logger.info(f"Starting hyperparameter tuning for {best_model_name}...")
+
+        # Validate inputs
+        if X_train is None or y_train is None:
+            raise ValueError("X_train and y_train must not be None.")
+        X_train = pd.DataFrame(X_train) if not isinstance(X_train, pd.DataFrame) else X_train
+        y_train = pd.Series(y_train) if not isinstance(y_train, pd.Series) else y_train
+
+        # Define expanded parameter grids for advanced search
+        param_grids = {
+            'XGBoost': {
+                'n_estimators': [100, 200, 500],
+                'max_depth': [3, 5, 7, 10],
+                'learning_rate': [0.01, 0.05, 0.1, 0.2],
+                'subsample': [0.6, 0.8, 1.0],
+                'colsample_bytree': [0.6, 0.8, 1.0]
+            },
+            'Random Forest': {
+                'n_estimators': [100, 200, 500],
+                'max_depth': [None, 10, 20, 30],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4],
+                'bootstrap': [True, False]
+            },
+            'LightGBM': {
+                'n_estimators': [100, 200, 500],
+                'max_depth': [-1, 10, 20, 30],
+                'learning_rate': [0.01, 0.05, 0.1, 0.2],
+                'num_leaves': [31, 50, 100],
+                'subsample': [0.6, 0.8, 1.0],
+                'colsample_bytree': [0.6, 0.8, 1.0]
+            },
+            'CatBoost': {
+                'iterations': [100, 500, 1000],
+                'depth': [4, 6, 8, 10],
+                'learning_rate': [0.01, 0.05, 0.1, 0.2],
+                'l2_leaf_reg': [1, 3, 5, 7],
+                'subsample': [0.6, 0.8, 1.0]
+            }
+        }
+
+        # Define models based on task
+        models = {
+            'XGBoost': XGBRegressor(random_state=42, n_jobs=-1) if task == 'regression' else XGBClassifier(random_state=42, n_jobs=-1),
+            'Random Forest': RandomForestRegressor(random_state=42, n_jobs=-1) if task == 'regression' else RandomForestClassifier(random_state=42, n_jobs=-1),
+            'LightGBM': LGBMRegressor(random_state=42, n_jobs=-1) if task == 'regression' else LGBMClassifier(random_state=42, n_jobs=-1),
+            'CatBoost': CatBoostRegressor(random_state=42, verbose=0) if task == 'regression' else CatBoostClassifier(random_state=42, verbose=0)
+        }
+
+        if best_model_name not in models:
+            raise ValueError(f"Model '{best_model_name}' not supported.")
+
+        best_model = models[best_model_name]
+        param_grid = param_grids.get(best_model_name, {})
+
+        if not param_grid:
+            best_model.fit(X_train, y_train)
+            logger.info(f"{best_model_name} has no parameters to tune.")
+            return best_model, {}
+
+        # Define scoring metric for evaluation
+        scoring = 'neg_mean_squared_error' if task == 'regression' else 'f1_weighted'
+
+        # Use TimeSeriesSplit for time-series cross-validation
+        tscv = TimeSeriesSplit(n_splits=5)
+
+        # Choose search method based on full_train parameter
+        if full_train:
+            search = GridSearchCV(
+                estimator=best_model,
+                param_grid=param_grid,
+                cv=tscv,
+                scoring=scoring,
+                n_jobs=-1,
+                verbose=0
+            )
+        else:
+            search = RandomizedSearchCV(
+                estimator=best_model,
+                param_distributions=param_grid,
+                n_iter=20,  # Number of random combinations to try
+                cv=tscv,
+                scoring=scoring,
+                n_jobs=-1,
+                verbose=0,
+                random_state=42
+            )
+
+        # Handle CatBoost categorical features
+        cat_features = None
+        if best_model_name == 'CatBoost':
+            cat_features = [col for col in X_train.columns if X_train[col].dtype.name in ['category', 'object']]
+
+        # Fit with early stopping support for boosting models
+        if best_model_name in ['XGBoost', 'LightGBM', 'CatBoost']:
+            search.fit(X_train, y_train, **({'cat_features': cat_features} if cat_features else {}))
+        else:
+            search.fit(X_train, y_train)
+
+        best_params = search.best_params_
+        best_model = search.best_estimator_
+        logger.info(f"Best hyperparameters for {best_model_name}: {best_params}")
+
+        # Evaluate on training data
+        y_pred_train = best_model.predict(X_train)
+        if task == 'regression':
+            rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
+            logger.info(f"Training RMSE: {rmse:.4f}")
+        else:
+            f1 = f1_score(y_train, y_pred_train, average='weighted')
+            logger.info(f"Training F1 Score: {f1:.4f}")
+
+        return best_model, best_params
+
+    except Exception as e:
+        logger.error(f"Error during hyperparameter tuning: {e}")
+        raise

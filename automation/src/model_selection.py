@@ -248,7 +248,106 @@ def train_test_model_selection(df, target_column, id_column=None, task='regressi
 
 
 
-def train_test_model_selection_timeseries(df, target_column, id_column=None, task='regression', time_column=None):
+# def model_selection_timeseries(df, target_column, id_column=None, task='regression', time_column=None):
+#     """
+#     Model selection for time-series forecasting, training on the entire dataset.
+#     No train-test split; returns the best model name for further tuning.
+#     Handles categorical columns dynamically.
+
+#     Parameters:
+#     - df: Input DataFrame with features and target.
+#     - target_column: Name of the target column (e.g., "target_within_1_month_after").
+#     - id_column: Entity ID column (e.g., "product_id") to drop or encode.
+#     - task: 'regression' or 'classification' (only regression supported for now).
+#     - time_column: Timestamp column for time-series awareness (optional).
+
+#     Returns:
+#     - best_model_name: Name of the best-performing model.
+#     - X: Full feature set (no split).
+#     - y: Full target set (no split).
+#     - None, None, None: Placeholders for compatibility (no test set).
+#     """
+#     try:
+#         logger.info("Starting model selection...")
+        
+
+
+#         # Null/Empty Checks
+#         if df.shape[0] == 0:
+#             raise ValueError("DataFrame is empty.")
+#         if target_column not in df.columns:
+#             raise ValueError(f"Target column '{target_column}' not found.")
+#         if df[target_column].isnull().all():
+#             raise ValueError(f"Target column '{target_column}' is entirely null.")
+
+#         # Drop ID column if present
+#         if id_column and id_column in df.columns:
+#             df = df.drop(columns=[id_column])
+#         else:
+#             logger.warning("No id_column specified or found; proceeding with all columns.")
+
+#         # Prepare X and y (entire dataset, no split)
+#         X = df.drop(columns=[target_column])
+#         y = df[target_column]
+        
+#         # Handle categorical columns
+#         categorical_cols = X.select_dtypes(include=['object', 'category']).columns
+#         if not categorical_cols.empty:
+#             logger.info(f"Found categorical columns: {categorical_cols.tolist()}")
+#             for col in categorical_cols:
+#                 if col != time_column:  # Exclude time_column if it's categorical
+#                     X[col] = pd.factorize(X[col])[0]  # Simple encoding (equivalent to LabelEncoder)
+#             logger.info(f"Encoded categorical columns: {categorical_cols.tolist()}")
+
+#         # Define regression models (suitable for demand forecasting)
+#         models = {
+#             'CatBoost': CatBoostRegressor(verbose=0, random_seed=42)  # Added for time-series compatibility
+#         }
+
+#         # Since no split, simulate evaluation with a simple fit and RMSE on training data
+#         results = []
+#         logger.info("Training models on full dataset and evaluating with training RMSE...")
+#         for model_name, model in models.items():
+#             try:
+#                 model.fit(X, y)
+#                 y_pred = model.predict(X)
+#                 rmse = np.sqrt(mean_squared_error(y, y_pred))
+#                 results.append({'Model': model_name, 'Training_RMSE': rmse})
+#                 logger.info(f"{model_name} => Training RMSE: {rmse:.4f}")
+#             except Exception as e:
+#                 logger.warning(f"Failed to train {model_name}: {e}")
+
+#         # Select best model based on training RMSE (lower is better)
+#         results_df = pd.DataFrame(results)
+#         if results_df.empty:
+#             raise ValueError("No models trained successfully.")
+#         results_df.sort_values(by="Training_RMSE", ascending=True, inplace=True)
+#         best_model_name = results_df.iloc[0]['Model']
+#         logger.info(f"Best Model: {best_model_name}")
+#         logger.info(f"Model selection results:\n{results_df}")
+
+#         # Return full X, y, and placeholders (no test set)
+#         return best_model_name, X, y, None, None, None
+
+#     except Exception as e:
+#         logger.error(f"Error in model_selection: {e}")
+#         raise
+
+
+
+import pandas as pd
+import numpy as np
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+def model_selection_timeseries(df, target_column, id_column=None, task='regression', time_column=None):
     """
     Model selection for time-series forecasting, training on the entire dataset.
     No train-test split; returns the best model name for further tuning.
@@ -288,34 +387,48 @@ def train_test_model_selection_timeseries(df, target_column, id_column=None, tas
         X = df.drop(columns=[target_column])
         y = df[target_column]
 
+        # Check for missing values
+        if X.isnull().any().any() or y.isnull().any():
+            logger.warning("Missing values detected in X or y. Some models (e.g., RandomForest) may fail.")
+
         # Handle categorical columns
         categorical_cols = X.select_dtypes(include=['object', 'category']).columns
         if not categorical_cols.empty:
             logger.info(f"Found categorical columns: {categorical_cols.tolist()}")
             for col in categorical_cols:
                 if col != time_column:  # Exclude time_column if it's categorical
-                    X[col] = pd.factorize(X[col])[0]  # Simple encoding (equivalent to LabelEncoder)
+                    X[col] = pd.factorize(X[col])[0]  # Simple encoding
             logger.info(f"Encoded categorical columns: {categorical_cols.tolist()}")
 
-        # Define regression models (suitable for demand forecasting)
+        # Define regression models
         models = {
-            'CatBoost': CatBoostRegressor(verbose=0, random_seed=42)  # Added for time-series compatibility
+            'CatBoost': CatBoostRegressor(verbose=0, random_seed=42),
+            'XGBoost': XGBRegressor(objective='reg:squarederror', verbosity=0, random_state=42),
+            'LightGBM': LGBMRegressor(verbose=-1, random_state=42),
+            'RandomForest': RandomForestRegressor(random_state=42)
         }
 
-        # Since no split, simulate evaluation with a simple fit and RMSE on training data
+        # Train models and evaluate on training data
         results = []
         logger.info("Training models on full dataset and evaluating with training RMSE...")
         for model_name, model in models.items():
             try:
+                start_time = time.time()
                 model.fit(X, y)
                 y_pred = model.predict(X)
                 rmse = np.sqrt(mean_squared_error(y, y_pred))
-                results.append({'Model': model_name, 'Training_RMSE': rmse})
-                logger.info(f"{model_name} => Training RMSE: {rmse:.4f}")
+                end_time = time.time()
+                training_time = end_time - start_time
+                results.append({
+                    'Model': model_name,
+                    'Training_RMSE': rmse,
+                    'Training_Time': training_time
+                })
+                logger.info(f"{model_name} => Training RMSE: {rmse:.4f}, Training Time: {training_time:.2f} seconds")
             except Exception as e:
                 logger.warning(f"Failed to train {model_name}: {e}")
 
-        # Select best model based on training RMSE (lower is better)
+        # Select best model based on training RMSE
         results_df = pd.DataFrame(results)
         if results_df.empty:
             raise ValueError("No models trained successfully.")
@@ -324,7 +437,7 @@ def train_test_model_selection_timeseries(df, target_column, id_column=None, tas
         logger.info(f"Best Model: {best_model_name}")
         logger.info(f"Model selection results:\n{results_df}")
 
-        # Return full X, y, and placeholders (no test set)
+        # Return full X, y, and placeholders
         return best_model_name, X, y, None, None, None
 
     except Exception as e:

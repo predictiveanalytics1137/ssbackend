@@ -1225,7 +1225,239 @@ def clean_nan_values(data):
            None if pd.isna(data) or (isinstance(data, float) and np.isnan(data)) else \
            0.0 if isinstance(data, float) and np.isinf(data) else data
 
-def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df, user_id, chat_id, best_params=None, entity_column=None):
+
+# def finalize_and_evaluate_model_timeseries(final_model, X_train, y_train, predictions_df, user_id, chat_id, best_params=None, entity_column=None):
+# # def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df, user_id, chat_id, best_params=None, entity_column=None):
+#     """
+#     Finalizes the time-series model by saving it, and generates metadata using validation predictions
+#     from the pipeline. Posts results to an API, including predictions with product_id and date.
+
+#     Parameters:
+#     - final_model: The trained model instance from the pipeline.
+#     - X_train (pd.DataFrame): Training features (full dataset up to cutoff, for metadata).
+#     - predictions_df (pd.DataFrame): Validation predictions from the pipeline (with 'actual', 'predicted', 'product_id', and 'analysis_time' columns).
+#     - user_id (str): User identifier for logging and API.
+#     - chat_id (str): Chat identifier for tracking and storing artifacts.
+
+#     Returns:
+#     - final_model: The finalized model instance (unchanged).
+#     - final_metrics (dict): Aggregated validation metrics (RMSE, MAE, R2) and assessment.
+#     """
+#     try:
+#         logger.info("Finalizing the time-series model and generating metadata from validation predictions...")
+#         eval_start = time.time()  # Start evaluation timer
+
+#         # Use validation predictions from the pipeline for metrics and predictions
+#         if predictions_df.empty:
+#             logger.warning("No validation predictions provided; using training data as fallback.")
+#             y_val_actual = X_train[target_column] if 'target_column' in globals() else X_train.iloc[:, -1]  # Fallback logic
+#             y_val_pred = final_model.predict(X_train)
+#             val_product_ids = X_train.index if entity_column in X_train else [f"prod_{i}" for i in range(X_train.shape[0])]
+#             val_dates = pd.Series([pd.Timestamp.now()] * X_train.shape[0], index=X_train.index).apply(lambda x: x.isoformat())
+#         else:
+#             y_val_actual = predictions_df['actual'].dropna()
+#             y_val_pred = predictions_df['predicted'].dropna()
+#             val_product_ids = predictions_df[entity_column].dropna()
+#             val_dates = pd.to_datetime(predictions_df['analysis_time']).dropna().apply(lambda x: x.isoformat())
+
+#         # Ensure aligned lengths
+#         min_length = min(len(y_val_actual), len(y_val_pred), len(val_product_ids), len(val_dates))
+#         y_val_actual = y_val_actual.iloc[:min_length].reset_index(drop=True)
+#         y_val_pred = y_val_pred.iloc[:min_length].reset_index(drop=True)
+#         val_product_ids = val_product_ids.iloc[:min_length].reset_index(drop=True)
+#         val_dates = val_dates.iloc[:min_length].reset_index(drop=True)
+
+#         # Calculate aggregated validation metrics
+#         val_rmse = np.sqrt(mean_squared_error(y_val_actual, y_val_pred))
+#         val_mae = mean_absolute_error(y_val_actual, y_val_pred)
+#         val_r2 = r2_score(y_val_actual, y_val_pred) if len(y_val_actual) > 1 else 0.0
+
+#         logger.info(f"Aggregated Validation RMSE: {val_rmse:.4f}, MAE: {val_mae:.4f}, R^2: {val_r2:.4f}")
+
+#         # Enhanced model assessment
+#         target_mean = np.nan_to_num(np.mean(y_val_actual), nan=0.0)
+#         rmse_threshold = target_mean * 0.2  # 20% of mean as threshold
+#         r2_threshold_low = 0.5
+#         r2_threshold_high = 0.7
+#         model_assessment = "Good Fit" if val_r2 > r2_threshold_high and val_rmse <= rmse_threshold else \
+#                           "Overfitting" if val_r2 > 0.9 and (val_rmse > rmse_threshold or len(y_val_actual) < X_train.shape[0] * 0.1) else \
+#                           "Underfitting" if val_r2 < r2_threshold_low or val_rmse > target_mean else \
+#                           "Check Further"
+#         logger.info(f"Model assessment: {model_assessment} (R²: {val_r2:.4f}, RMSE: {val_rmse:.4f}, Target Mean: {target_mean:.4f})")
+
+#         # Model metadata including testing samples
+#         model_type = final_model.__class__.__name__
+#         training_samples = X_train.shape[0]
+#         testing_samples = len(y_val_actual)  # Number of validation samples
+#         num_features = X_train.shape[1]
+#         eval_duration = time.time() - eval_start
+
+#         # Feature importance (if available)
+#         feature_importance = {}
+#         if hasattr(final_model, 'feature_importances_'):
+#             feature_importance = dict(zip(X_train.columns, final_model.feature_importances_))
+#         elif hasattr(final_model, 'coef_'):
+#             if len(final_model.coef_.shape) > 1:
+#                 coefs = final_model.coef_[0]  # Handle multi-class
+#             else:
+#                 coefs = final_model.coef_
+#             feature_importance = dict(zip(X_train.columns, coefs))
+
+#         # Top 10 features
+#         top_n = 10
+#         sorted_features = sorted(feature_importance.items(), key=lambda x: abs(x[1]), reverse=True)
+#         top_features = {k: float(v) for k, v in sorted_features[:top_n]}
+
+#         # SHAP importance (optional, for advanced analysis)
+#         shap_importance = {}
+#         try:
+#             sample_size = min(100, X_train.shape[0])
+#             X_sample = X_train.sample(sample_size, random_state=42)
+#             explainer = shap.Explainer(final_model, X_sample)
+#             shap_values = explainer(X_sample)
+            
+#             shap_importance = pd.DataFrame({
+#                 'feature': X_train.columns,
+#                 'mean_abs_shap': np.abs(shap_values.values).mean(axis=0)
+#             }).sort_values('mean_abs_shap', ascending=False)
+            
+#             shap_importance = {
+#                 k: float(v) 
+#                 for k, v in shap_importance.set_index('feature')['mean_abs_shap'].items()
+#             }
+#         except Exception as e:
+#             logger.warning(f"SHAP calculation failed: {e}")
+
+#         # Data characteristics from validation data
+#         actual_stats = {
+#             'mean': float(np.nan_to_num(np.mean(y_val_actual), nan=0.0)),
+#             'std': float(np.nan_to_num(np.std(y_val_actual), nan=0.0)) if len(y_val_actual) > 1 else 0.0,
+#             'min': float(np.nan_to_num(np.min(y_val_actual), nan=0.0)),
+#             'max': float(np.nan_to_num(np.max(y_val_actual), nan=0.0))
+#         }
+        
+#         predicted_stats = {
+#             'mean': float(np.nan_to_num(np.mean(y_val_pred), nan=0.0)),
+#             'std': float(np.nan_to_num(np.std(y_val_pred), nan=0.0)) if len(y_val_pred) > 1 else 0.0,
+#             'min': float(np.nan_to_num(np.min(y_val_pred), nan=0.0)),
+#             'max': float(np.nan_to_num(np.max(y_val_pred), nan=0.0))
+#         }
+
+#         # Feature correlations with target (using training data for stability, cleaning NaN)
+#         feature_correlation = X_train.corrwith(pd.Series(y_val_actual, index=X_train.index)).to_dict()
+#         feature_correlation = {k: float(np.nan_to_num(v, nan=0.0)) for k, v in feature_correlation.items()}
+
+#         # Core and attribute statistics (from training data, cleaning NaN)
+#         core_statistics = X_train.describe().to_dict()
+#         core_statistics = {
+#             k: {stat: float(np.nan_to_num(val, nan=0.0)) if isinstance(val, (np.integer, np.floating)) else val 
+#                 for stat, val in stats.items()}
+#             for k, stats in core_statistics.items()
+#         }
+        
+#         attribute_statistics = X_train.describe(include='all').to_dict()
+#         attribute_statistics = {
+#             k: {stat: float(np.nan_to_num(val, nan=0.0)) if isinstance(val, (np.integer, np.floating)) else val 
+#                 for stat, val in stats.items()}
+#             for k, stats in attribute_statistics.items()
+#         }
+
+#         # Prepare predictions for the payload with product_id and analysis_time
+#         predictions_data = {
+#             "entity_colum": val_product_ids.tolist(),
+#             'analysis_time': val_dates.tolist(),
+#             'actual': y_val_actual.tolist(),
+#             'predicted': y_val_pred.tolist()
+#         }
+
+#         # Build comprehensive payload, cleaning NaN values
+#         payload = {
+#             "model_metrics": {
+#                 "validation": {
+#                     "rmse": float(np.nan_to_num(val_rmse, nan=0.0)),
+#                     "mae": float(np.nan_to_num(val_mae, nan=0.0)),
+#                     "r2_score": float(np.nan_to_num(val_r2, nan=0.0))
+#                 },
+#                 "assessment": model_assessment
+#             },
+#             "model_metadata": {
+#                 "model_type": model_type,
+#                 "hyperparameters": best_params if best_params else {},
+#                 "training_samples": training_samples,
+#                 "testing_samples": testing_samples,  # Added testing samples
+#                 "num_features": num_features,
+#                 "evaluation_duration": float(np.nan_to_num(eval_duration, nan=0.0)),
+#                 "timestamp": pd.Timestamp.now().isoformat()  # Ensure string format
+#             },
+#             "data_characteristics": {
+#                 "actual_distribution": actual_stats,
+#                 "predicted_distribution": predicted_stats,
+#                 "feature_correlations": feature_correlation
+#             },
+#             "feature_analysis": {
+#                 "attribute_columns": list(X_train.columns),
+#                 "feature_importance": {k: float(np.nan_to_num(v, nan=0.0)) for k, v in feature_importance.items()},
+#                 "top_features": top_features,
+#                 "shap_importance": {k: float(np.nan_to_num(v, nan=0.0)) for k, v in (shap_importance or {}).items()}
+#             },
+#             "core_statistics": core_statistics,
+#             "attribute_statistics": attribute_statistics,
+#             "predictions": predictions_data,
+#             "user_id": user_id,
+#             "chat_id": chat_id
+#         }
+
+#         # Clean NaN values and ensure JSON serialization
+#         cleaned_payload = clean_nan_values(payload)
+#         logger.debug(f"Cleaned payload: {json.dumps(cleaned_payload)}")  # Debug log
+
+#         # Post results to API
+#         api_url = "http://127.0.0.1:8000/model/modelresults/"
+#         headers = {"Content-Type": "application/json"}
+#         try:
+#             response = requests.post(api_url, data=json.dumps(cleaned_payload), headers=headers)
+#             if response.status_code == 201:
+#                 logger.info("Data successfully posted to the Django API.")
+#             else:
+#                 logger.warning(f"API post failed: {response.status_code} {response.text}")
+#                 print(f"API post failed: {response.status_code} {response.text}")
+#         except Exception as post_err:
+#             logger.error(f"Error posting data to API: {post_err}")
+#             raise  # Re-raise to stop pipeline on failure
+
+#         # Save the model to S3
+#         logger.info("Saving final model to S3...")
+#         bucket_name = "artifacts1137"
+#         prefix = f"ml-artifacts/{chat_id}/"
+#         model_key = f"final_model.joblib"
+#         with io.BytesIO() as f:
+#             joblib.dump(final_model, f)
+#             f.seek(0)
+#             upload_to_s3(f, bucket_name, f"{prefix}{model_key}")
+#         logger.info(f"Final model saved to s3://{bucket_name}/{prefix}{model_key}")
+
+#         # Return final metrics for logging
+#         final_metrics = {
+#             'Validation': {
+#                 'RMSE': float(np.nan_to_num(val_rmse, nan=0.0)),
+#                 'MAE': float(np.nan_to_num(val_mae, nan=0.0)),
+#                 'R2': float(np.nan_to_num(val_r2, nan=0.0))
+#             },
+#             'Assessment': model_assessment
+#         }
+#         return final_model, final_metrics
+
+#     except Exception as e:
+#         logger.error(f"Error during final time-series model evaluation: {e}")
+#         raise
+
+
+
+
+
+
+
+def finalize_and_evaluate_model_timeseries(final_model, X_train, y_train, predictions_df, user_id, chat_id, best_params=None, entity_column=None):
     """
     Finalizes the time-series model by saving it, and generates metadata using validation predictions
     from the pipeline. Posts results to an API, including predictions with product_id and date.
@@ -1243,16 +1475,17 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
     """
     try:
         logger.info("Finalizing the time-series model and generating metadata from validation predictions...")
-        eval_start = time.time()  # Start evaluation timer
+        eval_start = time.time()
 
-        # Use validation predictions from the pipeline for metrics and predictions
+        # Validation predictions handling (unchanged)
         if predictions_df.empty:
             logger.warning("No validation predictions provided; using training data as fallback.")
-            y_val_actual = X_train[target_column] if 'target_column' in globals() else X_train.iloc[:, -1]  # Fallback logic
+            y_val_actual = X_train[target_column] if 'target_column' in globals() else X_train.iloc[:, -1]
             y_val_pred = final_model.predict(X_train)
             val_product_ids = X_train.index if entity_column in X_train else [f"prod_{i}" for i in range(X_train.shape[0])]
             val_dates = pd.Series([pd.Timestamp.now()] * X_train.shape[0], index=X_train.index).apply(lambda x: x.isoformat())
         else:
+
             y_val_actual = predictions_df['actual'].dropna()
             y_val_pred = predictions_df['predicted'].dropna()
             val_product_ids = predictions_df[entity_column].dropna()
@@ -1265,23 +1498,31 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
         val_product_ids = val_product_ids.iloc[:min_length].reset_index(drop=True)
         val_dates = val_dates.iloc[:min_length].reset_index(drop=True)
 
-        # Calculate aggregated validation metrics
+        # Validation metrics
         val_rmse = np.sqrt(mean_squared_error(y_val_actual, y_val_pred))
         val_mae = mean_absolute_error(y_val_actual, y_val_pred)
         val_r2 = r2_score(y_val_actual, y_val_pred) if len(y_val_actual) > 1 else 0.0
-
         logger.info(f"Aggregated Validation RMSE: {val_rmse:.4f}, MAE: {val_mae:.4f}, R^2: {val_r2:.4f}")
+
+        # Training metrics
+        import pdb; pdb.set_trace()
+        y_train_pred = final_model.predict(X_train)
+        train_mae = mean_absolute_error(y_train, y_train_pred)
+        train_rmse = np.sqrt(mean_squared_error(y_train, y_train_pred))
+        logger.info(f"Training MAE: {train_mae:.4f}, RMSE: {train_rmse:.4f}")
 
         # Enhanced model assessment
         target_mean = np.nan_to_num(np.mean(y_val_actual), nan=0.0)
-        rmse_threshold = target_mean * 0.2  # 20% of mean as threshold
-        r2_threshold_low = 0.5
+        rmse_threshold = target_mean * 0.2
         r2_threshold_high = 0.7
-        model_assessment = "Good Fit" if val_r2 > r2_threshold_high and val_rmse <= rmse_threshold else \
-                          "Overfitting" if val_r2 > 0.9 and (val_rmse > rmse_threshold or len(y_val_actual) < X_train.shape[0] * 0.1) else \
-                          "Underfitting" if val_r2 < r2_threshold_low or val_rmse > target_mean else \
-                          "Check Further"
-        logger.info(f"Model assessment: {model_assessment} (R²: {val_r2:.4f}, RMSE: {val_rmse:.4f}, Target Mean: {target_mean:.4f})")
+        r2_threshold_low = 0.5
+        if train_rmse < 0.5 * val_rmse or train_mae < 0.5 * val_mae:
+            model_assessment = "Overfitting"
+        else:
+            model_assessment = "Good Fit" if val_r2 > r2_threshold_high and val_rmse <= rmse_threshold else \
+                               "Underfitting" if val_r2 < r2_threshold_low or val_rmse > target_mean else \
+                               "Check Further"
+        logger.info(f"Model assessment: {model_assessment} (Train RMSE: {train_rmse:.4f}, Val RMSE: {val_rmse:.4f}, R²: {val_r2:.4f})")
 
         # Model metadata including testing samples
         model_type = final_model.__class__.__name__
@@ -1362,7 +1603,7 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
 
         # Prepare predictions for the payload with product_id and analysis_time
         predictions_data = {
-            "entity_colum": val_product_ids.tolist(),
+            "product_id": val_product_ids.tolist(),
             'analysis_time': val_dates.tolist(),
             'actual': y_val_actual.tolist(),
             'predicted': y_val_pred.tolist()
@@ -1371,6 +1612,10 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
         # Build comprehensive payload, cleaning NaN values
         payload = {
             "model_metrics": {
+                "training": {
+                    "rmse": float(np.nan_to_num(train_rmse, nan=0.0)),
+                    "mae": float(np.nan_to_num(train_mae, nan=0.0))
+                },
                 "validation": {
                     "rmse": float(np.nan_to_num(val_rmse, nan=0.0)),
                     "mae": float(np.nan_to_num(val_mae, nan=0.0)),
@@ -1405,9 +1650,8 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
             "chat_id": chat_id
         }
 
-        # Clean NaN values and ensure JSON serialization
         cleaned_payload = clean_nan_values(payload)
-        logger.debug(f"Cleaned payload: {json.dumps(cleaned_payload)}")  # Debug log
+        logger.debug(f"Cleaned payload: {json.dumps(cleaned_payload)}")
 
         # Post results to API
         api_url = "http://127.0.0.1:8000/model/modelresults/"
@@ -1434,8 +1678,12 @@ def finalize_and_evaluate_model_timeseries(final_model, X_train, predictions_df,
             upload_to_s3(f, bucket_name, f"{prefix}{model_key}")
         logger.info(f"Final model saved to s3://{bucket_name}/{prefix}{model_key}")
 
-        # Return final metrics for logging
+        # Updated final_metrics
         final_metrics = {
+            'Training': {
+                'RMSE': float(np.nan_to_num(train_rmse, nan=0.0)),
+                'MAE': float(np.nan_to_num(train_mae, nan=0.0))
+            },
             'Validation': {
                 'RMSE': float(np.nan_to_num(val_rmse, nan=0.0)),
                 'MAE': float(np.nan_to_num(val_mae, nan=0.0)),

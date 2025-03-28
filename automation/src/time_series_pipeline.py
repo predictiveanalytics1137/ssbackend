@@ -1,6 +1,7 @@
 
 
 import datetime
+from catboost import CatBoostRegressor
 import pandas as pd
 import numpy as np
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -16,14 +17,14 @@ import featuretools as ft
 import io
 from sklearn.preprocessing import StandardScaler
 import pandas as pd
+from src.train_final_model import train_final_model
 from src.outlier_handling import apply_outlier_bounds, detect_and_handle_outliers_train
 from src.s3_operations import get_s3_client, load_from_s3, upload_to_s3
 from src.data_preprocessing import handle_categorical_features
 from src.finalization import finalize_and_evaluate_model, finalize_and_evaluate_model_timeseries
-from src.model_selection import train_test_model_selection, train_test_model_selection_timeseries
-from src.hyperparameter_tuning import hyperparameter_tuning
+from src.hyperparameter_tuning import hyperparameter_tuning, hyperparameter_tuning_timeseries
 from src.utils import automatic_imputation
-from src.feature_engineering import feature_engineering, feature_engineering_timeseries
+from src.feature_engineering import feature_engineering, feature_engineering_timeseries, time_based_feature_engineering
 from src.feature_selection import feature_selection
 from src.helper import normalize_column_names
 
@@ -605,7 +606,6 @@ from src.outlier_handling import apply_outlier_bounds, detect_and_handle_outlier
 from src.s3_operations import get_s3_client, upload_to_s3
 from src.data_preprocessing import handle_categorical_features
 from src.finalization import finalize_and_evaluate_model_timeseries
-from src.model_selection import train_test_model_selection_timeseries
 from src.hyperparameter_tuning import hyperparameter_tuning
 from src.utils import automatic_imputation
 from src.feature_engineering import feature_engineering_timeseries
@@ -630,7 +630,7 @@ from src.outlier_handling import apply_outlier_bounds, detect_and_handle_outlier
 from src.s3_operations import get_s3_client, upload_to_s3
 from src.data_preprocessing import handle_categorical_features
 from src.finalization import finalize_and_evaluate_model_timeseries
-from src.model_selection import train_test_model_selection_timeseries
+from src.model_selection import model_selection_timeseries
 from src.hyperparameter_tuning import hyperparameter_tuning
 from src.utils import automatic_imputation
 from src.feature_engineering import feature_engineering_timeseries
@@ -1009,21 +1009,44 @@ def train_pipeline_timeseries(
                 raise ValueError(f"Time column '{time_column}' not found.")
             df[time_column] = pd.to_datetime(df[time_column], errors="coerce")
             # Create lag features on raw numeric columns
-            columns_to_lag = [
-                col for col in df.columns 
-                if col not in [time_column, entity_column, new_target_column] and 'lag' not in col
-                and df[col].dtype in ['int64', 'float64']  # Only numeric columns
-            ]
-            df = create_lag_features(df, entity_column, columns_to_lag, time_column, lags=3)
+            # columns_to_lag = [
+            #     col for col in df.columns 
+            #     if col not in [time_column, entity_column, new_target_column] and 'lag' not in col
+            #     and df[col].dtype in ['int64', 'float64']  # Only numeric columns
+            # ]
+            # df = create_lag_features(df, entity_column, columns_to_lag, time_column, lags=3)
 
         logger.info("Performing missing value imputation...")
-
         df_imputed, imputers = automatic_imputation(df, target_column=new_target_column)
         logger.info("Handling outliers...")
         df_outlier_fixed, outlier_bounds = detect_and_handle_outliers_train(df_imputed, factor=1.5)
+
+
+
+
+
+        df_engineered = time_based_feature_engineering(
+        df_outlier_fixed,
+        time_col=time_column,
+        entity_id=entity_column,
+        target_column=new_target_column,
+        drop_original_time_col=False
+    )
+        current_status = "feature_engineering_completed"
+        update_status(current_status)
+
+
+
+
+
+
+
+
+
+
         logger.info("Encoding categorical features...")
         df_encoded, encoders = handle_categorical_features(
-            df=df_outlier_fixed,
+            df=df_engineered,
             target_column=new_target_column,
             id_column=entity_column,
             cardinality_threshold=3
@@ -1032,50 +1055,98 @@ def train_pipeline_timeseries(
 
 
         # 2) Separate Training and Validation Data with 30-Day Validation Period
-        logger.info("Splitting data into training and validation sets...")
+        # logger.info("Splitting data into training and validation sets...")
+        # df_encoded[time_column] = pd.to_datetime(df_encoded[time_column])
+        # sampled_dates = df_encoded.groupby(entity_column)[time_column].max().reset_index()
+        # sampled_dates.columns = [entity_column, 'latest_date']
+        # df_with_dates = pd.merge(df_encoded, sampled_dates, on=entity_column, how='left')
+        # validation_days = 30
+        # validation_cutoff = df_with_dates['latest_date'].apply(lambda x: x - pd.Timedelta(days=validation_days))
+        # train_data = df_with_dates[df_with_dates[time_column] <= validation_cutoff].copy()
+        # validation_data = df_with_dates[df_with_dates[time_column] > validation_cutoff].copy()
+        # logger.info(f"Training set shape: {train_data.shape}")
+        # logger.info(f"Validation set shape: {validation_data.shape}")
+
+
+        # 2) Separate Training and Test Data with 10% of Most Recent Data per Entity
+        logger.info("Splitting data into training and test sets...")
         df_encoded[time_column] = pd.to_datetime(df_encoded[time_column])
-        sampled_dates = df_encoded.groupby(entity_column)[time_column].max().reset_index()
-        sampled_dates.columns = [entity_column, 'latest_date']
-        df_with_dates = pd.merge(df_encoded, sampled_dates, on=entity_column, how='left')
-        validation_days = 30
-        validation_cutoff = df_with_dates['latest_date'].apply(lambda x: x - pd.Timedelta(days=validation_days))
-        train_data = df_with_dates[df_with_dates[time_column] <= validation_cutoff].copy()
-        validation_data = df_with_dates[df_with_dates[time_column] > validation_cutoff].copy()
+        df_encoded = df_encoded.sort_values(by=[entity_column, time_column])
+
+        # Calculate group sizes (number of rows per entity)
+        group_sizes = df_encoded.groupby(entity_column).size()
+
+        # Calculate test sizes: 10% of rows per entity, at least 1 if n >= 2, else 0
+        test_sizes = group_sizes.apply(lambda n: max(1, int(np.ceil(0.1 * n))) if n >= 2 else 0)
+
+        # Map test sizes to the dataframe
+        df_encoded['test_size'] = df_encoded[entity_column].map(test_sizes)
+
+        # Assign row numbers within each entity group (starting from 0)
+        df_encoded['row_num'] = df_encoded.groupby(entity_column).cumcount()
+
+        # Map total number of rows per entity to each row
+        df_encoded['n'] = df_encoded[entity_column].map(group_sizes)
+
+        # Mark rows for the test set (the last test_size rows for each entity)
+        df_encoded['is_test'] = df_encoded['row_num'] >= (df_encoded['n'] - df_encoded['test_size'])
+
+        # Split into training and test sets
+        test_data = df_encoded[df_encoded['is_test']].copy()
+        train_data = df_encoded[~df_encoded['is_test']].copy()
+
+        # Drop auxiliary columns
+        aux_cols = ['row_num', 'n', 'test_size', 'is_test']
+        train_data = train_data.drop(columns=aux_cols)
+        test_data = test_data.drop(columns=aux_cols)
+
         logger.info(f"Training set shape: {train_data.shape}")
-        logger.info(f"Validation set shape: {validation_data.shape}")
+        logger.info(f"Test set shape: {test_data.shape}")
 
 
-        # Drop latest_date before feature engineering
-        train_data = train_data.drop(columns=['latest_date'], errors='ignore')
-        validation_data = validation_data.drop(columns=['latest_date'], errors='ignore')
 
+
+
+
+
+        # # Drop latest_date before feature engineering
+        # train_data = train_data.drop(columns=['latest_date'], errors='ignore')
+        # validation_data = validation_data.drop(columns=['latest_date'], errors='ignore')
 
 
 
         logger.info("Performing feature engineering on training data...")
         current_status = "feature_engineering_started"
         update_status(current_status)
-        
-        df_engineered, feature_defs = feature_engineering_timeseries(
-            train_data,
-            target_column=new_target_column,
-            id_column=entity_column,
-            time_column=time_column,
-            training=True
-        )
-        current_status = "feature_engineering_completed"
-        update_status(current_status)
-        
+
+        # df_engineered, feature_defs = feature_engineering_timeseries(
+        #     train_data,
+        #     target_column=new_target_column,
+        #     id_column=entity_column,
+        #     time_column=time_column,
+        #     training=True
+        # )
+        # import pdb; pdb.set_trace()
+    #     time_based_feature_engineering(
+    #     train_data,
+    #     time_col=time_column,
+    #     entity_id=entity_column,
+    #     target_column=new_target_column,
+    #     drop_original_time_col=False
+    # )
+    #     current_status = "feature_engineering_completed"
+    #     update_status(current_status)
+
 
         logger.info(f"Generated features in df_engineered: {df_engineered.columns.tolist()}")
-        df_engineered = normalize_column_names(df_engineered)
-        
+        #df_engineered = normalize_column_names(df_engineered)
+
 
         logger.info("Performing feature selection...")
-        
+
         exclude_cols = [col for col in df_engineered.columns if df_engineered[col].nunique() == len(df_engineered)]
         df_selected, selected_features = feature_selection(
-            df_engineered,
+            train_data,
             target_column=new_target_column,
             time_column=time_column,
             task="regression",
@@ -1092,61 +1163,125 @@ def train_pipeline_timeseries(
 
         # 5) Scale Features After Selection
         logger.info("Scaling selected features...")
+        # scaler = StandardScaler()
+        # X_train_unscaled = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
+        # y_train = df_selected[new_target_column]
+        # X_train_numeric = X_train_unscaled.select_dtypes(include=["float64", "int64"])
+        # X_train_non_numeric = X_train_unscaled.select_dtypes(exclude=["float64", "int64"])
+        # X_train_scaled_numeric = pd.DataFrame(
+        #     scaler.fit_transform(X_train_numeric),
+        #     columns=X_train_numeric.columns,
+        #     index=X_train_numeric.index
+        # )
+        # X_train = pd.concat([X_train_scaled_numeric, X_train_non_numeric], axis=1)
+
+
+
+
+
+
+        # 5) Scale Features After Selection
+        logger.info("Scaling selected features...")
         scaler = StandardScaler()
+
+        # Drop target and entity columns to get features
         X_train_unscaled = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
         y_train = df_selected[new_target_column]
-        X_train_numeric = X_train_unscaled.select_dtypes(include=["float64", "int64"])
-        X_train_non_numeric = X_train_unscaled.select_dtypes(exclude=["float64", "int64"])
+
+        # Select numeric features (including all integer and float types)
+        X_train_numeric = X_train_unscaled.select_dtypes(include='number')
+        logger.info(f"Numeric columns: {X_train_numeric.columns.tolist()}")
+
+        # Select non-numeric features
+        X_train_non_numeric = X_train_unscaled.select_dtypes(exclude='number')
+        logger.info(f"Non-numeric columns: {X_train_non_numeric.columns.tolist()}")
+
+        # Scale numeric features
         X_train_scaled_numeric = pd.DataFrame(
             scaler.fit_transform(X_train_numeric),
             columns=X_train_numeric.columns,
             index=X_train_numeric.index
         )
+
+        # Concatenate scaled numeric and non-numeric features
         X_train = pd.concat([X_train_scaled_numeric, X_train_non_numeric], axis=1)
+        logger.info(f"Shape of X_train after scaling and concatenation: {X_train.shape}")
 
 
-        # X_train = df_selected.drop(columns=[new_target_column, entity_column], errors='ignore')
-        # y_train = df_selected[new_target_column]
+
+
+
+
 
         logger.info("Selecting best model...")
-        best_model_name, _, _, _, _, _ = train_test_model_selection_timeseries(
-            df_selected.assign(analysis_time=analysis_time) if analysis_time is not None else df_selected,
+
+
+        # Create a DataFrame with scaled features and target
+        df_for_model_selection = X_train.copy()
+        df_for_model_selection[new_target_column] = y_train
+        # best_model_name, _, _, _, _, _ = model_selection_timeseries(
+        #     df_selected.assign(analysis_time=analysis_time) if analysis_time is not None else df_selected,
+        #     target_column=new_target_column,
+        #     id_column=entity_column,
+        #     time_column="analysis_time",
+        #     task='regression'
+        # )
+        logger.info("Selecting best model...")
+        best_model_name, _, _, _, _, _ = model_selection_timeseries(
+            df_for_model_selection,
             target_column=new_target_column,
-            id_column=entity_column,
-            time_column="analysis_time",
+            id_column=None,  # entity_column was dropped in step 5
+            time_column="analysis_time" if analysis_time is not None else None,
             task='regression'
         )
         logger.info(f"Tuning hyperparameters for {best_model_name}...")
-        best_model, best_params = hyperparameter_tuning(
+        
+        best_model, best_params = hyperparameter_tuning_timeseries(
             best_model_name=best_model_name,
             X_train=X_train,
             y_train=y_train,
-            X_test=None,
-            y_test=None,
-            task='regression'
+            task='regression',
+            full_train=False
         )
         current_status = "hyperparameter_tuning_completed"
         update_status(current_status)
-
-        logger.info("Training final model with best hyperparameters...")
         
-        final_model = best_model.__class__(**best_params)
-        final_model.fit(X_train, y_train)
+        logger.info("Training final model with best hyperparameters...")
+
+
+        import pdb; pdb.set_trace()
+        final_model = train_final_model(
+            best_model_name=best_model_name,
+            best_params=best_params,
+            X_train=X_train,
+            y_train=y_train,
+            task='regression',  # Matches your pipeline's machine_learning_type
+            early_stopping_rounds=10
+        )
+
+        # final_model.fit(X_train, y_train)
+        
+
 
         logger.info("Generating validation predictions...")
         # 7) Process Validation Data Through Same Steps
         logger.info("Processing validation data for predictions...")
 
         # Feature Engineering on Validation Data
-        logger.info("Performing feature engineering on validation data...")
-        val_engineered = feature_engineering_timeseries(
-            validation_data,
-            target_column=new_target_column,
-            id_column=entity_column,
-            time_column=time_column,
-            training=False,
-            feature_defs=feature_defs
-        )
+        logger.info("Performing feature engineering on validation data...")        
+        # val_engineered = feature_engineering_timeseries(
+        #     validation_data,
+        #     target_column=new_target_column,
+        #     id_column=entity_column,
+        #     time_column=time_column,
+        #     training=False,
+        #     feature_defs=feature_defs
+        # )
+        val_engineered = time_based_feature_engineering(
+        validation_data,
+        time_col=time_column,
+        drop_original_time_col=False
+    )
         logger.info(f"Generated features in val_engineered: {val_engineered.columns.tolist()}")
         val_engineered = normalize_column_names(val_engineered)
 
@@ -1228,11 +1363,12 @@ def train_pipeline_timeseries(
 
         
         logger.info("Finalizing and evaluating the model with validation predictions...")
-        import pdb; pdb.set_trace()
+
         final_model, final_metrics = finalize_and_evaluate_model_timeseries(
             final_model=final_model,
             X_train=X_train,
-            predictions_df=val_results_agg,  # Pass raw predictions
+            y_train=y_train,  # Add this
+            predictions_df=val_results_agg,
             user_id=user_id,
             chat_id=chat_id,
             best_params=best_params,
@@ -1250,11 +1386,11 @@ def train_pipeline_timeseries(
         save_to_s3(final_model, "final_model.joblib")
         save_to_s3(imputers, "imputers.joblib")
         save_to_s3(encoders, "encoders.joblib")
-        save_to_s3(feature_defs, "feature_defs.joblib")
+        # save_to_s3(feature_defs, "feature_defs.joblib")
         save_to_s3(selected_features, "selected_features.pkl")
         save_to_s3(outlier_bounds, "outlier_bounds.pkl")
         save_to_s3(X_train.columns.tolist(), "saved_column_names.pkl")
-        # save_to_s3(df_encoded, "historical_data.joblib")
+        save_to_s3(df_encoded, "historical_data.joblib")
 
         
         # Avoid duplication by filtering out existing entity_column
